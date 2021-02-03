@@ -1002,6 +1002,35 @@ impl pallet_assets::Config for Runtime {
 	type WeightInfo = pallet_assets::weights::SubstrateWeight<Runtime>;
 }
 
+parameter_types! {
+	// Choose a fee that incentivizes desireable behavior.
+	pub const NickReservationFee: u128 = 100;
+	// Maximum bounds on storage are important to secure your chain.
+	pub const MaxNickLength: usize = 32;
+}
+
+impl pallet_nicks_migration::Trait for Runtime {
+	// The Balances pallet implements the ReservableCurrency trait.
+	// https://substrate.dev/rustdocs/v2.0.0/pallet_balances/index.html#implementations-2
+	type Currency = pallet_balances::Module<Runtime>;
+
+	// Use the NickReservationFee from the parameter_types block.
+	type ReservationFee = NickReservationFee;
+
+	// No action is taken when deposits are forfeited.
+	type Slashed = ();
+
+	// Configure the FRAME System Root origin as the Nick pallet admin.
+	// https://substrate.dev/rustdocs/v2.0.0/frame_system/enum.RawOrigin.html#variant.Root
+	type ForceOrigin = frame_system::EnsureRoot<AccountId>;
+
+	// Use the MaxNickLength from the parameter_types block.
+	type MaxLength = MaxNickLength;
+
+	// The ubiquitous event type.
+	type Event = Event;
+}
+
 construct_runtime!(
 	pub enum Runtime where
 		Block = Block,
@@ -1044,6 +1073,7 @@ construct_runtime!(
 		Assets: pallet_assets::{Module, Call, Storage, Event<T>},
 		Mmr: pallet_mmr::{Module, Storage},
 		Lottery: pallet_lottery::{Module, Call, Storage, Event<T>},
+		NicksMigration: pallet_nicks_migration::{Module, Call, Storage, Event<T>, Config<T>},
 	}
 );
 

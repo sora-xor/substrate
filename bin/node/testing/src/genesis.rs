@@ -22,8 +22,8 @@ use crate::keyring::*;
 use sp_keyring::{Ed25519Keyring, Sr25519Keyring};
 use node_runtime::{
 	GenesisConfig, BalancesConfig, SessionConfig, StakingConfig, SystemConfig,
-	GrandpaConfig, IndicesConfig, ContractsConfig, SocietyConfig, wasm_binary_unwrap,
-	AccountId, StakerStatus,
+	GrandpaConfig, IndicesConfig, ContractsConfig, SocietyConfig, NicksMigrationConfig,
+	wasm_binary_unwrap, AccountId, StakerStatus,
 };
 use node_runtime::constants::currency::*;
 use sp_core::ChangesTrieConfiguration;
@@ -119,5 +119,11 @@ pub fn config_endowed(
 			max_members: 999,
 		}),
 		pallet_vesting: Some(Default::default()),
+		pallet_nicks_migration: Some(NicksMigrationConfig {
+			nicks: vec![
+				(alice(), b"It's Alice".to_vec()),
+				(bob(), b"This is Bob".to_vec()),
+			],
+		}),
 	}
 }

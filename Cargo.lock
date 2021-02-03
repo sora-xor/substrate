@@ -4265,6 +4265,7 @@ dependencies = [
  "pallet-membership",
  "pallet-mmr",
  "pallet-multisig",
+ "pallet-nicks-migration",
  "pallet-offences",
  "pallet-offences-benchmarking",
  "pallet-proxy",
@@ -5143,6 +5144,21 @@ dependencies = [
 
 [[package]]
 name = "pallet-nicks"
+version = "2.0.1"
+dependencies = [
+ "frame-support",
+ "frame-system",
+ "pallet-balances",
+ "parity-scale-codec 2.0.0",
+ "serde",
+ "sp-core",
+ "sp-io",
+ "sp-runtime",
+ "sp-std",
+]
+
+[[package]]
+name = "pallet-nicks-migration"
 version = "2.0.1"
 dependencies = [
  "frame-support",

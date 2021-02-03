@@ -23,9 +23,9 @@ use sp_core::{Pair, Public, crypto::UncheckedInto, sr25519};
 use serde::{Serialize, Deserialize};
 use node_runtime::{
 	AuthorityDiscoveryConfig, BabeConfig, BalancesConfig, ContractsConfig, CouncilConfig,
-	DemocracyConfig,GrandpaConfig, ImOnlineConfig, SessionConfig, SessionKeys, StakerStatus,
+	DemocracyConfig, GrandpaConfig, ImOnlineConfig, SessionConfig, SessionKeys, StakerStatus,
 	StakingConfig, ElectionsConfig, IndicesConfig, SocietyConfig, SudoConfig, SystemConfig,
-	TechnicalCommitteeConfig, wasm_binary_unwrap,
+	TechnicalCommitteeConfig, NicksMigrationConfig, wasm_binary_unwrap,
 };
 use node_runtime::Block;
 use node_runtime::constants::currency::*;
@@ -326,6 +326,12 @@ pub fn testnet_genesis(
 			max_members: 999,
 		}),
 		pallet_vesting: Some(Default::default()),
+		pallet_nicks_migration: Some(NicksMigrationConfig {
+			nicks: vec![
+				(get_account_id_from_seed::<sr25519::Public>("Alice"), b"It's Alice".to_vec()),
+				(get_account_id_from_seed::<sr25519::Public>("Bob"), b"This is Bob".to_vec()),
+			]
+		}),
 	}
 }
 

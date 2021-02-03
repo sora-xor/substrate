@@ -63,6 +63,7 @@ pallet-lottery = { version = "2.0.0", default-features = false, path = "../../..
 pallet-membership = { version = "2.0.0", default-features = false, path = "../../../frame/membership" }
 pallet-mmr = { version = "2.0.0", default-features = false, path = "../../../frame/merkle-mountain-range" }
 pallet-multisig = { version = "2.0.0", default-features = false, path = "../../../frame/multisig" }
+pallet-nicks-migration = { version = "2.0.0", default-features = false, path = "../../../frame/nicks-migration" }
 pallet-offences = { version = "2.0.0", default-features = false, path = "../../../frame/offences" }
 pallet-offences-benchmarking = { version = "2.0.0", path = "../../../frame/offences/benchmarking", default-features = false, optional = true }
 pallet-proxy = { version = "2.0.0", default-features = false, path = "../../../frame/proxy" }
@@ -120,6 +121,7 @@ std = [
 	"pallet-membership/std",
 	"pallet-mmr/std",
 	"pallet-multisig/std",
+	"pallet-nicks-migration/std",
 	"pallet-identity/std",
 	"pallet-scheduler/std",
 	"node-primitives/std",
