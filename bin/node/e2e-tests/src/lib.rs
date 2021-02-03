@@ -58,7 +58,6 @@ impl ChainInfo for NodeTemplateChainInfo {
         Self::SelectChain,
     >;
     type SignedExtras = SignedExtra;
-    type Event = node_runtime::Event;
 
     fn load_spec() -> Result<Box<dyn sc_service::ChainSpec>, String> {
         Ok(Box::new(development_config()))
@@ -138,10 +137,10 @@ impl ChainInfo for NodeTemplateChainInfo {
         ))
     }
 
-    fn dispatch_with_root(call: <Self::Runtime as frame_system::Config>::Call, node: &Node<Self>) {
+    fn dispatch_with_root(_call: <Self::Runtime as frame_system::Config>::Call, node: &Node<Self>) {
         let alice = MultiSigner::from(Alice.public()).into_account();
-        let call = pallet_sudo::Call::sudo(Box::new(call)); // :D
-        node.submit_extrinsic(call, alice);
+        // let call = pallet_sudo::Call::sudo(Box::new(call)); // :D
+        // node.submit_extrinsic(call, alice);
         node.seal_blocks(1);
     }
 }
