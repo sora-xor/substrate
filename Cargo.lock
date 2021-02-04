@@ -4110,6 +4110,7 @@ dependencies = [
  "pallet-balances-e2e-tests",
  "pallet-sudo",
  "pallet-transaction-payment",
+ "runtime-upgrade-dryrun-api",
  "sc-consensus",
  "sc-consensus-babe",
  "sc-consensus-manual-seal",

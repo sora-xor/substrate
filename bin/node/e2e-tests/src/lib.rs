@@ -149,6 +149,17 @@ impl ChainInfo for NodeTemplateChainInfo {
 mod tests {
     use super::*;
     use pallet_balances_e2e_tests::*;
+    use sp_api::ProvideRuntimeApi;
+    use sp_runtime::OpaqueExtrinsic;
+    use sp_runtime::generic::{Block, BlockId};
+
+    #[test]
+    fn migration_test() {
+        use runtime_upgrade_dryrun_api::DryRunRuntimeUpgrade;
+        let node = Node::<NodeTemplateChainInfo>::new().unwrap();
+
+        node.client().runtime_api().dry_run_runtime_upgrade(&BlockId::<Block<_, OpaqueExtrinsic>>::Number(0));
+    }
 
     #[test]
     fn runtime_upgrade() {

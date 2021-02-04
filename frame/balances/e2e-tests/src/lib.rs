@@ -23,9 +23,9 @@ pub fn force_transfer<T>(
     where
         T: ChainInfo,
         T::Runtime: pallet_balances::Config,
-        <T::Runtime as frame_system::Config>::Call: From<BalancesCall<T::Runtime>> + Encode,
+        <T::Runtime as frame_system::Config>::Call: From<BalancesCall<T::Runtime>>,
         <T::Runtime as pallet_balances::Config>::Balance: From<u8>,
-        <T::Runtime as frame_system::Config>::AccountId: From<AccountId32> + Encode,
+        <T::Runtime as frame_system::Config>::AccountId: From<AccountId32>,
         <T::Block as BlockT>::Extrinsic: From<Extrinsic<T::Runtime, T::SignedExtras>>,
         <<T::Runtime as frame_system::Config>::Lookup as sp_runtime::traits::StaticLookup>::Source:
             From<<T::Runtime as frame_system::Config>::AccountId>,
@@ -56,9 +56,9 @@ pub fn set_balance<T>(
     where
         T: ChainInfo,
         T::Runtime: pallet_balances::Config,
-        <T::Runtime as frame_system::Config>::Call: From<BalancesCall<T::Runtime>> + Encode,
+        <T::Runtime as frame_system::Config>::Call: From<BalancesCall<T::Runtime>>,
         <T::Runtime as pallet_balances::Config>::Balance: From<u128>,
-        <T::Runtime as frame_system::Config>::AccountId: From<AccountId32> + Encode,
+        <T::Runtime as frame_system::Config>::AccountId: From<AccountId32>,
         <T::Block as BlockT>::Extrinsic: From<Extrinsic<T::Runtime, T::SignedExtras>>,
         <<T::Runtime as frame_system::Config>::Lookup as sp_runtime::traits::StaticLookup>::Source:
             From<<T::Runtime as frame_system::Config>::AccountId>,
@@ -90,9 +90,9 @@ pub fn transfer_keep_alive<T>(
     where
         T: ChainInfo,
         T::Runtime: pallet_balances::Config,
-        <T::Runtime as frame_system::Config>::Call: From<BalancesCall<T::Runtime>> + Encode,
+        <T::Runtime as frame_system::Config>::Call: From<BalancesCall<T::Runtime>>,
         <T::Runtime as pallet_balances::Config>::Balance: From<u8>,
-        <T::Runtime as frame_system::Config>::AccountId: From<AccountId32> + Encode,
+        <T::Runtime as frame_system::Config>::AccountId: From<AccountId32>,
         <T::Block as BlockT>::Extrinsic: From<Extrinsic<T::Runtime, T::SignedExtras>>,
         <<T::Runtime as frame_system::Config>::Lookup as sp_runtime::traits::StaticLookup>::Source:
             From<<T::Runtime as frame_system::Config>::AccountId>,
