@@ -90,7 +90,7 @@ pub enum StorageVersion {
 decl_storage! {
 	trait Store for Module<T: Trait> as NicksMigration {
 		/// The lookup table for names.
-		NameOf: map hasher(twox_64_concat) T::AccountId => Option<(Nickname, BalanceOf<T>)>;
+		pub NameOf: map hasher(twox_64_concat) T::AccountId => Option<(Nickname, BalanceOf<T>)>;
 		/// The current version of the pallet.
 		PalletVersion: StorageVersion = StorageVersion::V1Bytes;
 	}
@@ -246,8 +246,16 @@ decl_module! {
 		}
 
 		fn on_runtime_upgrade() -> frame_support::weights::Weight {
-			migration::migrate_to_v2::<T>()
+			let nicks = deprecated::NameOf::<T>::iter().map(|(_, (nick, _))| nick).collect::<Vec<_>>();
+			frame_support::debug::info!("old: {:?}", nicks);
+
+			let weight = migration::migrate_to_v2::<T>();
+
+			let nicks = NameOf::<T>::iter().map(|(_, (nick, _))| nick).collect::<Vec<_>>();
+			frame_support::debug::info!("new: {:?}", nicks);
+			weight
 		}
+
 	}
 }
 
@@ -284,6 +292,15 @@ pub mod deprecated {
 	}
 }
 
+impl<T: Trait> Module<T> {
+	pub fn nicks() -> Vec<Nickname> {
+		NameOf::<T>::iter().map(|(_, (nick, _))| {
+			frame_support::debug::info!("\n\n{:?}\n\n", nick);
+			nick
+		}).collect::<Vec<_>>()
+	}
+}
+
 pub mod migration {
 	use super::*;
 
@@ -299,16 +316,18 @@ pub mod migration {
 			// We transform the storage values from the old into the new format.
 			NameOf::<T>::translate::<(Vec<u8>, BalanceOf<T>), _>(
 				|k: T::AccountId, (nick, deposit): (Vec<u8>, BalanceOf<T>)| {
-					frame_support::debug::info!("     Migrated nickname for {:?}...", k);
+					frame_support::debug::print!("     Migrated nickname for {:?}...", k);
 
 					// We split the nick at ' ' (<space>).
-					match nick.iter().rposition(|&x| x == b" "[0]) {
+					let nick = match nick.iter().rposition(|&x| x == b" "[0]) {
 						Some(ndx) => Some((Nickname {
 							first: nick[0..ndx].to_vec(),
 							last: Some(nick[ndx + 1..].to_vec())
 						}, deposit)),
 						None => Some((Nickname { first: nick, last: None }, deposit))
-					}
+					};
+					frame_support::debug::print!("     Migrated nickname for {:?}...", nick);
+					nick
 				}
 			);
 

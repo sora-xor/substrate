@@ -152,13 +152,26 @@ mod tests {
     use sp_api::ProvideRuntimeApi;
     use sp_runtime::OpaqueExtrinsic;
     use sp_runtime::generic::{Block, BlockId};
+    use pallet_nicks_migration::{NameOf, Module, deprecated};
+    use frame_support::storage::IterableStorageMap;
+    use frame_support::StorageMap;
+    use frame_support::traits::OnRuntimeUpgrade;
 
     #[test]
     fn migration_test() {
         use runtime_upgrade_dryrun_api::DryRunRuntimeUpgrade;
         let node = Node::<NodeTemplateChainInfo>::new().unwrap();
 
+        // we probably want to go with this approach
+        // node.upgrade_runtime(vec![]);
+
         node.client().runtime_api().dry_run_runtime_upgrade(&BlockId::<Block<_, OpaqueExtrinsic>>::Number(0));
+
+        node.with_state(|| {
+            // so this takes down the test
+            panic!("yikess\n\n\n");
+
+        });
     }
 
     #[test]
