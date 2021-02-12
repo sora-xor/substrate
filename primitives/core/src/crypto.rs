@@ -240,7 +240,8 @@ pub trait Ss58Codec: Sized + AsMut<[u8]> + AsRef<[u8]> + Default {
 		let len = res.as_mut().len();
 		let d = s.from_base58().map_err(|_| PublicError::BadBase58)?; // failure here would be invalid encoding.
 		if d.len() != len + 3 {
-			println!("BadLength 2: {:?}, {:?}", d, s);
+			println!("BadLength 2: {:?}, {:?}, {:?}", d.len(), len, s);
+			println!("{:?}, {:?}", d, std::any::type_name::<Self>());
 			// Invalid length.
 			return Err(PublicError::BadLength);
 		}
