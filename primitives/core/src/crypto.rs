@@ -240,6 +240,7 @@ pub trait Ss58Codec: Sized + AsMut<[u8]> + AsRef<[u8]> + Default {
 		let len = res.as_mut().len();
 		let d = s.from_base58().map_err(|_| PublicError::BadBase58)?; // failure here would be invalid encoding.
 		if d.len() != len + 3 {
+			println!("BadLength 2: {:?}, {:?}", d, s);
 			// Invalid length.
 			return Err(PublicError::BadLength);
 		}
@@ -501,7 +502,7 @@ ss58_address_format!(
 	SubsocialAccount =>
 		(28, "subsocial", "Subsocial network, standard account (*25519).")
 	DhiwayAccount =>
-		(29, "cord", "Dhiway CORD network, standard account (*25519).")	
+		(29, "cord", "Dhiway CORD network, standard account (*25519).")
 	PhalaAccount =>
 		(30, "phala", "Phala Network, standard account (*25519).")
 	LitentryAccount =>
@@ -556,6 +557,7 @@ impl<T: Sized + AsMut<[u8]> + AsRef<[u8]> + Default + Derive> Ss58Codec for T {
 		let s = cap.name("ss58")
 			.map(|r| r.as_str())
 			.unwrap_or(DEV_ADDRESS);
+		println!("SS58::from_string: {:?}", s);
 		let addr = if s.starts_with("0x") {
 			let d = hex::decode(&s[2..]).map_err(|_| PublicError::InvalidFormat)?;
 			let mut r = Self::default();
@@ -563,6 +565,7 @@ impl<T: Sized + AsMut<[u8]> + AsRef<[u8]> + Default + Derive> Ss58Codec for T {
 				r.as_mut().copy_from_slice(&d);
 				r
 			} else {
+				println!("BadLength 1");
 				Err(PublicError::BadLength)?
 			}
 		} else {
