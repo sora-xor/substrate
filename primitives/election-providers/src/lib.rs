@@ -163,7 +163,9 @@ use sp_std::{prelude::*, fmt::Debug};
 
 /// Re-export some type as they are used in the interface.
 pub use sp_arithmetic::PerThing;
-pub use sp_npos_elections::{Assignment, ExtendedBalance, PerThing128, Supports, VoteWeight};
+pub use sp_npos_elections::{
+	Assignment, ExtendedBalance, PerThing128, Supports, VoteWeight, ElectionResult,
+};
 
 /// Something that can provide the data to an [`ElectionProvider`].
 pub trait ElectionDataProvider<AccountId, BlockNumber> {
@@ -238,4 +240,21 @@ impl<AccountId, BlockNumber> ElectionProvider<AccountId, BlockNumber> for () {
 	fn elect() -> Result<Supports<AccountId>, Self::Error> {
 		Err("<() as ElectionProvider> cannot do anything.")
 	}
+}
+
+/// Something that can provide the basic functionality of election mining.
+pub trait SolutionMiner {
+	/// The error type.
+	type Error: sp_std::fmt::Debug;
+	/// The account identifier.
+	type AccountId;
+	/// Accuracy used in the election.
+	type Accuracy: PerThing128;
+
+	/// Mine a new solution given the provided voters, target, and desired target snapshot.
+	fn mine(
+		voters: Vec<(Self::AccountId, VoteWeight, Vec<Self::AccountId>)>,
+		targets: Vec<Self::AccountId>,
+		desired_targets: usize,
+	) -> Result<ElectionResult<Self::AccountId, Self::Accuracy>, Self::Error>;
 }

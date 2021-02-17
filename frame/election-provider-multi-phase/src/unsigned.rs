@@ -24,6 +24,7 @@ use sp_npos_elections::{
 	seq_phragmen, CompactSolution, ElectionResult, assignment_ratio_to_staked_normalized,
 	assignment_staked_to_ratio_normalized,
 };
+use sp_election_providers::SolutionMiner;
 use sp_runtime::{offchain::storage::StorageValueRef, traits::TrailingZeroInput};
 use sp_std::cmp::Ordering;
 
@@ -46,6 +47,8 @@ pub enum MinerError {
 	PreDispatchChecksFailed,
 	/// The solution generated from the miner is not feasible.
 	Feasibility(FeasibilityError),
+	/// External errors from something that implements [`SolutionMiner`].
+	SolutionMiner,
 }
 
 impl From<sp_npos_elections::Error> for MinerError {
@@ -60,36 +63,70 @@ impl From<FeasibilityError> for MinerError {
 	}
 }
 
-impl<T: Config> Pallet<T> {
-	/// Mine a new solution, and submit it back to the chain as an unsigned transaction.
-	pub fn mine_check_and_submit() -> Result<(), MinerError> {
-		let iters = Self::get_balancing_iters();
-		// get the solution, with a load of checks to ensure if submitted, IT IS ABSOLUTELY VALID.
-		let (raw_solution, witness) = Self::mine_and_check(iters)?;
+impl<T: Config> SolutionMiner for Pallet<T> {
+	type Error = MinerError;
+	type AccountId = T::AccountId;
+	type Accuracy = CompactAccuracyOf<T>;
 
+	fn mine(
+		voters: Vec<(Self::AccountId, VoteWeight, Vec<Self::AccountId>)>,
+		targets: Vec<Self::AccountId>,
+		desired_targets: usize,
+	) -> Result<ElectionResult<Self::AccountId, Self::Accuracy>, Self::Error> {
+		let iters = Self::get_balancing_iters();
+		seq_phragmen(desired_targets, targets, voters, Some((iters, 0))).map_err(Into::into)
+	}
+}
+
+impl<T: Config> Pallet<T> {
+	/// Mine a solution, check it and then submit it back to the chain as an unsigned transaction.
+	///
+	/// This should only be used in an offchain worker context within this pallet.
+	pub(crate) fn mine_check_and_submit() -> Result<(), MinerError> {
+		let (raw_solution, witness) = Self::mine_and_check::<Self>()?;
 		let call = Call::submit_unsigned(raw_solution, witness).into();
 		SubmitTransaction::<T, Call<T>>::submit_unsigned_transaction(call)
 			.map_err(|_| MinerError::PoolSubmissionFailed)
 	}
 
-	/// Mine a new npos solution, with all the relevant checks to make sure that it will be accepted
-	/// to the chain.
+	/// Mine a solution given the provided miner, and make sure that it passes all the checks needed
+	/// in order to be accepted on-chain.
 	///
-	/// If you want an unchecked solution, use [`Pallet::mine_solution`].
-	/// If you want a checked solution and submit it at the same time, use
-	/// [`Pallet::mine_check_and_submit`].
-	pub fn mine_and_check(
-		iters: usize,
-	) -> Result<(RawSolution<CompactOf<T>>, SolutionOrSnapshotSize), MinerError> {
-		let (raw_solution, witness) = Self::mine_solution(iters)?;
+	/// This can be used by an external tool/miner with a custom mining function in order to mine
+	/// new solutions whilst still ensuring that they are correct.
+	///
+	/// Will also return the witness data which should be sent to the chain.
+	pub fn mine_and_check<
+		Miner: SolutionMiner<AccountId = T::AccountId, Accuracy = CompactAccuracyOf<T>>,
+	>() -> Result<(RawSolution<CompactOf<T>>, SolutionOrSnapshotSize), MinerError> {
+		let RoundSnapshot { voters, targets } =
+			Self::snapshot().ok_or(MinerError::SnapshotUnAvailable)?;
+		let desired_targets = Self::desired_targets().ok_or(MinerError::SnapshotUnAvailable)?;
 
+		// get the solution, with a load of checks to ensure if submitted, IT IS ABSOLUTELY VALID.
+		let election_result = Miner::mine(voters, targets, desired_targets as usize)
+			.map_err(|err| {
+				log!(error, "configurable miner failed with unknown error: {:?}", err);
+				MinerError::SolutionMiner
+			})?;
+		let (raw_solution, witness) = Self::process_solution(election_result)?;
+		let raw_solution = Self::check_solution(raw_solution)?;
+
+		Ok((raw_solution, witness))
+	}
+
+	/// Check the given solution to be valid and feasible.
+	pub fn check_solution(
+		raw_solution: RawSolution<CompactOf<T>>,
+	) -> Result<RawSolution<CompactOf<T>>, MinerError> {
 		// ensure that this will pass the pre-dispatch checks
 		Self::unsigned_pre_dispatch_checks(&raw_solution).map_err(|e| {
 			log!(warn, "pre-dispatch-checks failed for mined solution: {:?}", e);
 			MinerError::PreDispatchChecksFailed
 		})?;
 
-		// ensure that this is a feasible solution
+		// ensure that this is a feasible solution. Sadly this consumes the solution and gives us
+		// back a ready solution that is useless in this occasion.
 		let _ = Self::feasibility_check(raw_solution.clone(), ElectionCompute::Unsigned).map_err(
 			|e| {
 				log!(warn, "feasibility-check failed for mined solution: {:?}", e);
@@ -97,32 +134,14 @@ impl<T: Config> Pallet<T> {
 			},
 		)?;
 
-		Ok((raw_solution, witness))
-	}
-
-	/// Mine a new npos solution.
-	pub fn mine_solution(
-		iters: usize,
-	) -> Result<(RawSolution<CompactOf<T>>, SolutionOrSnapshotSize), MinerError> {
-		let RoundSnapshot { voters, targets } =
-			Self::snapshot().ok_or(MinerError::SnapshotUnAvailable)?;
-		let desired_targets = Self::desired_targets().ok_or(MinerError::SnapshotUnAvailable)?;
-
-		seq_phragmen::<_, CompactAccuracyOf<T>>(
-			desired_targets as usize,
-			targets,
-			voters,
-			Some((iters, 0)),
-		)
-		.map_err(Into::into)
-		.and_then(Self::prepare_election_result)
+		Ok(raw_solution)
 	}
 
 	/// Convert a raw solution from [`sp_npos_elections::ElectionResult`] to [`RawSolution`], which
 	/// is ready to be submitted to the chain.
 	///
-	/// Will always reduce the solution as well.
-	pub fn prepare_election_result(
+	/// Will always reduce the solution as well, to make its size the minimum.
+	pub fn process_solution(
 		election_result: ElectionResult<T::AccountId, CompactAccuracyOf<T>>,
 	) -> Result<(RawSolution<CompactOf<T>>, SolutionOrSnapshotSize), MinerError> {
 		// NOTE: This code path is generally not optimized as it is run offchain. Could use some at
@@ -667,7 +686,8 @@ mod tests {
 
 	#[test]
 	fn miner_works() {
-		ExtBuilder::default().build_and_execute(|| {
+		let (mut ext, _) = ExtBuilder::default().build_offchainify(2);
+		ext.execute_with(|| {
 			roll_to(25);
 			assert!(MultiPhase::current_phase().is_unsigned());
 
@@ -676,7 +696,7 @@ mod tests {
 			assert_eq!(MultiPhase::desired_targets().unwrap(), 2);
 
 			// mine seq_phragmen solution with 2 iters.
-			let (solution, witness) = MultiPhase::mine_solution(2).unwrap();
+			let (solution, witness) = MultiPhase::mine_and_check::<MultiPhase>().unwrap();
 
 			// ensure this solution is valid.
 			assert!(MultiPhase::queued_solution().is_none());
@@ -687,11 +707,12 @@ mod tests {
 
 	#[test]
 	fn miner_trims_weight() {
-		ExtBuilder::default().miner_weight(100).mock_weight_info(true).build_and_execute(|| {
+		let (mut ext, _) = ExtBuilder::default().miner_weight(100).mock_weight_info(true).build_offchainify(2);
+		ext.execute_with(|| {
 			roll_to(25);
 			assert!(MultiPhase::current_phase().is_unsigned());
 
-			let (solution, witness) = MultiPhase::mine_solution(2).unwrap();
+			let (solution, witness) = MultiPhase::mine_and_check::<MultiPhase>().unwrap();
 			let solution_weight = <Runtime as Config>::WeightInfo::submit_unsigned(
 				witness.voters,
 				witness.targets,
@@ -705,7 +726,7 @@ mod tests {
 			// now reduce the max weight
 			<MinerMaxWeight>::set(25);
 
-			let (solution, witness) = MultiPhase::mine_solution(2).unwrap();
+			let (solution, witness) = MultiPhase::mine_and_check::<MultiPhase>().unwrap();
 			let solution_weight = <Runtime as Config>::WeightInfo::submit_unsigned(
 				witness.voters,
 				witness.targets,
@@ -759,7 +780,7 @@ mod tests {
 						distribution: vec![(10, PerU16::one())],
 					}],
 				};
-				let (solution, witness) = MultiPhase::prepare_election_result(result).unwrap();
+				let (solution, witness) = MultiPhase::process_solution(result).unwrap();
 				assert_ok!(MultiPhase::unsigned_pre_dispatch_checks(&solution));
 				assert_ok!(MultiPhase::submit_unsigned(Origin::none(), solution, witness));
 				assert_eq!(MultiPhase::queued_solution().unwrap().score[0], 10);
@@ -776,7 +797,7 @@ mod tests {
 						},
 					],
 				};
-				let (solution, _) = MultiPhase::prepare_election_result(result).unwrap();
+				let (solution, _) = MultiPhase::process_solution(result).unwrap();
 				// 12 is not 50% more than 10
 				assert_eq!(solution.score[0], 12);
 				assert_noop!(
@@ -798,7 +819,7 @@ mod tests {
 						},
 					],
 				};
-				let (solution, witness) = MultiPhase::prepare_election_result(result).unwrap();
+				let (solution, witness) = MultiPhase::process_solution(result).unwrap();
 				assert_eq!(solution.score[0], 17);
 
 				// and it is fine
