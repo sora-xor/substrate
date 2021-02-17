@@ -96,6 +96,8 @@ impl<T: Config> Pallet<T> {
 	/// new solutions whilst still ensuring that they are correct.
 	///
 	/// Will also return the witness data which should be sent to the chain.
+	// TODO: now we can have a test where we assert with any miner, if the solution is not feasible,
+	// it will not pass this function.
 	pub fn mine_and_check<
 		Miner: SolutionMiner<AccountId = T::AccountId, Accuracy = CompactAccuracyOf<T>>,
 	>() -> Result<(RawSolution<CompactOf<T>>, SolutionOrSnapshotSize), MinerError> {
