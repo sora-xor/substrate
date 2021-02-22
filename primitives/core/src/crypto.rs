@@ -238,10 +238,13 @@ pub trait Ss58Codec: Sized + AsMut<[u8]> + AsRef<[u8]> + Default {
 	#[cfg(feature = "std")]
 	fn from_ss58check(s: &str) -> Result<Self, PublicError> {
 		Self::from_ss58check_with_version(s)
-			.and_then(|(r, v)| match v {
-				v if !v.is_custom() => Ok(r),
-				v if v == *DEFAULT_VERSION.lock() => Ok(r),
-				_ => Err(PublicError::UnknownVersion),
+			.and_then(|(r, v)| {
+				println!("check: version: {:?}, default: {:?}", v, DEFAULT_VERSION.lock());
+				match v {
+					v if !v.is_custom() => Ok(r),
+					v if v == *DEFAULT_VERSION.lock() => Ok(r),
+					_ => Err(PublicError::UnknownVersion),
+				}
 			})
 	}
 
@@ -289,10 +292,13 @@ pub trait Ss58Codec: Sized + AsMut<[u8]> + AsRef<[u8]> + Default {
 	#[cfg(feature = "std")]
 	fn from_string(s: &str) -> Result<Self, PublicError> {
 		Self::from_string_with_version(s)
-			.and_then(|(r, v)| match v {
-				v if !v.is_custom() => Ok(r),
-				v if v == *DEFAULT_VERSION.lock() => Ok(r),
-				_ => Err(PublicError::UnknownVersion),
+			.and_then(|(r, v)| {
+				println!("string: version: {:?}, default: {:?}", v, DEFAULT_VERSION.lock());
+				match v {
+					v if !v.is_custom() => Ok(r),
+					v if v == *DEFAULT_VERSION.lock() => Ok(r),
+					_ => Err(PublicError::UnknownVersion),
+				}
 			})
 	}
 
