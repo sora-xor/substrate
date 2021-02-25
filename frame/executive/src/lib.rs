@@ -260,7 +260,7 @@ where
 		digest
 	}
 
-	fn initialize_block_impl(
+	pub fn initialize_block_impl(
 		block_number: &System::BlockNumber,
 		parent_hash: &System::Hash,
 		digest: &Digest<System::Hash>,

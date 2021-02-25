@@ -21,6 +21,7 @@
 
 use sp_std::prelude::*;
 use frame_support::weights::Weight;
+use sp_runtime::{traits::NumberFor, RuntimeString};
 
 sp_api::decl_runtime_apis! {
 	/// Runtime api for testing the execution of a runtime upgrade.
@@ -32,6 +33,9 @@ sp_api::decl_runtime_apis! {
 		///
 		/// Returns the consumed weight of the migration in case of a successful one, combined with
 		/// the total allowed block weight of the runtime.
-		fn on_runtime_upgrade() -> Result<(Weight, Weight), sp_runtime::RuntimeString>;
+		fn on_runtime_upgrade() -> Result<(Weight, Weight), RuntimeString>;
+
+		/// Initialize an empty block with the given number.
+		fn initialize_block(number: NumberFor<Block>) -> Result<(Weight, Weight), RuntimeString>;
 	}
 }

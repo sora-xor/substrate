@@ -1381,6 +1381,41 @@ impl_runtime_apis! {
 			let weight = Executive::try_runtime_upgrade()?;
 			Ok((weight, RuntimeBlockWeights::get().max_block))
 		}
+
+		fn initialize_block(number: NumberFor<Block>) -> Result<(Weight, Weight), sp_runtime::RuntimeString> {
+			frame_support::debug::RuntimeLogger::init();
+			// a fake pre-digest
+			use sp_consensus_babe::{digests::PreDigest, digests::SecondaryPlainPreDigest, BABE_ENGINE_ID};
+			use sp_runtime::generic::DigestItem;
+			use frame_system::DigestOf;
+
+			let next_slot = <pallet_babe::Module<Runtime>>::current_slot() + 1;
+			let next_time = *next_slot * SLOT_DURATION ;
+			frame_support::debug::info!("initializing block at #{:?} [time = {:?}, slot = {:?}, slot_duration = {:?}]", number, next_time, next_slot, SLOT_DURATION);
+
+			let pre = PreDigest::SecondaryPlain(SecondaryPlainPreDigest {
+				slot: next_slot,
+				authority_index: Default::default(),
+			});
+
+			let mut digest: DigestOf<Runtime> = Default::default();
+			digest.push(DigestItem::PreRuntime(BABE_ENGINE_ID, pre.encode()));
+			Executive::initialize_block_impl(
+				&number,
+				&Default::default(),
+				&digest,
+			);
+
+			// emulate a timestamp being set
+			use frame_support::storage::StorageValue;
+			<pallet_timestamp::Pallet<Runtime>>::set(Origin::none(), next_time).map_err(|_| "failed to set timestamp")?;
+			frame_support::debug::info!("finalizing block at #{:?}", number);
+			let _ = Executive::finalize_block();
+
+			// weight of `on_initialize` always goes to mandatory class.
+			let total = frame_system::Module::<Runtime>::block_weight().total();
+			Ok((total, RuntimeBlockWeights::get().max_block))
+		}
 	}
 
 	#[cfg(feature = "runtime-benchmarks")]

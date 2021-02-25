@@ -290,7 +290,10 @@ impl Builder {
 	async fn load_remote(&self) -> Vec<KeyPair> {
 		let config = self.as_online();
 		let at = self.as_online().at.unwrap().clone();
-		info!(target: LOG_TARGET, "scraping keypairs from remote node {} @ {:?}", config.uri, at);
+		info!(
+			target: LOG_TARGET,
+			"scraping key-pairs from remote node uri {} {}@{:?}", config.uri, self.chain, at
+		);
 
 		let keys_and_values = if config.modules.len() > 0 {
 			let mut filtered_kv = vec![];
@@ -449,6 +452,16 @@ mod tests {
 	#[cfg(feature = "remote-test")]
 	async fn can_build_all() {
 		init_logger();
-		Builder::new().build().await.execute_with(|| {});
+		Builder::new()
+			.mode(Mode::Online(OnlineConfig {
+				cache: Some(CacheConfig {
+					name: "test_cache_to_remove.bin".into(),
+					..Default::default()
+				}),
+				..Default::default()
+			}))
+			.build()
+			.await
+			.execute_with(|| {});
 	}
 }

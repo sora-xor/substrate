@@ -401,6 +401,10 @@ impl<T: Config> Module<T> {
 		// so we don't rotate the epoch.
 		now != One::one() && {
 			let diff = CurrentSlot::get().saturating_sub(Self::current_epoch_start());
+			sp_std::if_std! {
+				dbg!(Self::current_epoch_start(), diff, CurrentSlot::get());
+			}
+
 			*diff >= T::EpochDuration::get()
 		}
 	}
@@ -441,11 +445,11 @@ impl<T: Config> Module<T> {
 		NextEpochConfig::put(config);
 	}
 
-	/// DANGEROUS: Enact an epoch change. Should be done on every block where `should_epoch_change` has returned `true`,
-	/// and the caller is the only caller of this function.
+	/// DANGEROUS: Enact an epoch change. Should be done on every block where `should_epoch_change`
+	/// has returned `true`, and the caller is the only caller of this function.
 	///
-	/// Typically, this is not handled directly by the user, but by higher-level validator-set manager logic like
-	/// `pallet-session`.
+	/// Typically, this is not handled directly by the user, but by higher-level validator-set
+	/// manager logic like `pallet-session`.
 	pub fn enact_epoch_change(
 		authorities: Vec<(AuthorityId, BabeAuthorityWeight)>,
 		next_authorities: Vec<(AuthorityId, BabeAuthorityWeight)>,
@@ -459,6 +463,9 @@ impl<T: Config> Module<T> {
 			.checked_add(1)
 			.expect("epoch indices will never reach 2^64 before the death of the universe; qed");
 
+		sp_std::if_std! {
+			dbg!(EpochIndex::get());
+		}
 		EpochIndex::put(epoch_index);
 		Authorities::put(authorities);
 
