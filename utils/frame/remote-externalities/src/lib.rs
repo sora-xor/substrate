@@ -250,7 +250,10 @@ impl Builder {
 		trace!(target: LOG_TARGET, "rpc: finalized_head");
 		RpcApi::finalized_head(&*self.as_online().rpc)
 			.await
-			.map_err(|_| "rpc finalized_head failed.")
+			.map_err(|e|
+				println!("Error = {:?}", e);
+				"rpc finalized_head failed."
+			)
 	}
 
 	/// Relay the request to `state_getPairs` rpc endpoint.
@@ -264,7 +267,10 @@ impl Builder {
 		trace!(target: LOG_TARGET, "rpc: storage_pairs: {:?} / {:?}", prefix, at);
 		RpcApi::storage_pairs(&*self.as_online().rpc, prefix, Some(at))
 			.await
-			.map_err(|_| "rpc finalized_head failed")
+			.map_err(|_| {
+				println!("Error = {:?}", e);
+				"rpc storage_pairs failed"
+			})
 	}
 }
 
