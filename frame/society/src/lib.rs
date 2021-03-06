@@ -1331,6 +1331,7 @@ impl<T: Config<I>, I: Instance> Module<T, I> {
 			let mut total_payouts = <BalanceOf<T, I>>::zero();
 
 			let accepted = candidates.into_iter().filter_map(|Bid {value, who: candidate, kind }| {
+				println!("👀 deciding on candidate: {:?}", candidate);
 				let mut approval_count = 0;
 
 				// Creates a vector of (vote, member) for the given candidate
@@ -1339,14 +1340,17 @@ impl<T: Config<I>, I: Instance> Module<T, I> {
 					.filter_map(|m| <Votes<T, I>>::take(&candidate, m).map(|v| (v, m)))
 					.inspect(|&(v, _)| if v == Vote::Approve { approval_count += 1 })
 					.collect::<Vec<_>>();
+				println!("+ votes = {:?}", votes);
 
 				// Select one of the votes at random.
 				// Note that `Vote::Skeptical` and `Vote::Reject` both reject the candidate.
 				let is_accepted = pick_item(&mut rng, &votes).map(|x| x.0) == Some(Vote::Approve);
+				println!("+ accepted? = {:?}", is_accepted);
 
 				let matching_vote = if is_accepted { Vote::Approve } else { Vote::Reject };
 
 				let bad_vote = |m: &T::AccountId| {
+					println!("Slashing and striking {:?} for being on the wrong side", m);
 					// Voter voted wrong way (or was just a lazy skeptic) then reduce their payout
 					// and increase their strikes. after MaxStrikes then they go into suspension.
 					let amount = Self::slash_payout(m, T::WrongSideDeduction::get());
@@ -1371,6 +1375,7 @@ impl<T: Config<I>, I: Instance> Module<T, I> {
 					).cloned()
 				);
 
+				println!("😋 Rewardees: {:?}", rewardees);
 				if is_accepted {
 					total_approvals += approval_count;
 					total_payouts += value;
@@ -1396,6 +1401,7 @@ impl<T: Config<I>, I: Instance> Module<T, I> {
 			// Reward one of the voters who voted the right way.
 			if !total_slash.is_zero() {
 				if let Some(winner) = pick_item(&mut rng, &rewardees) {
+					println!("Random winner of {:?} reward = {:?}", total_slash, winner);
 					// If we can't reward them, not much that can be done.
 					Self::bump_payout(winner, maturity, total_slash);
 				} else {
