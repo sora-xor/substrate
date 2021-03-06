@@ -318,8 +318,10 @@ impl Builder {
 	}
 
 	async fn init_remote_client(&mut self) -> Result<(), &'static str> {
-		let at = self.rpc_get_head().await?;
-		self.as_online_mut().at = Some(at);
+		if self.as_online().at.is_none() {
+			let at = self.rpc_get_head().await?;
+			self.as_online_mut().at = Some(at);
+		}
 		Ok(())
 	}
 
