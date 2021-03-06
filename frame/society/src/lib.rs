@@ -1303,7 +1303,7 @@ impl<T: Config<I>, I: Instance> Module<T, I> {
 	}
 
 	/// End the current period and begin a new one.
-	fn rotate_period(members: &mut Vec<T::AccountId>) {
+	pub fn rotate_period(members: &mut Vec<T::AccountId>) {
 		let phrase = b"society_rotation";
 
 		let mut pot = <Pot<T, I>>::get();
