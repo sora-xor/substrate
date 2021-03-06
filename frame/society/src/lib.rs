@@ -1376,7 +1376,7 @@ impl<T: Config<I>, I: Instance> Module<T, I> {
 					).cloned()
 				);
 
-				sp_std::if_std! { println!("😋 Rewardees: {:?}", rewardees); }
+				// sp_std::if_std! { println!("😋 Rewardees: {:?}", rewardees); }
 				if is_accepted {
 					total_approvals += approval_count;
 					total_payouts += value;
