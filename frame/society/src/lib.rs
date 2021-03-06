@@ -1340,7 +1340,9 @@ impl<T: Config<I>, I: Instance> Module<T, I> {
 					.filter_map(|m| <Votes<T, I>>::take(&candidate, m).map(|v| (v, m)))
 					.inspect(|&(v, _)| if v == Vote::Approve { approval_count += 1 })
 					.collect::<Vec<_>>();
-				println!("+ votes = {:?}", votes);
+				votes.into_iter().for_each(|v| {
+					println!("+ vote = {:?}", v);
+				})
 
 				// Select one of the votes at random.
 				// Note that `Vote::Skeptical` and `Vote::Reject` both reject the candidate.
