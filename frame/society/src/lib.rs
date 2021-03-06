@@ -1179,7 +1179,6 @@ fn pick_item<'a, R: RngCore, T>(rng: &mut R, items: &'a [T]) -> Option<&'a T> {
 
 /// Pick a new PRN, in the range [0, `max`] (inclusive).
 fn pick_usize<'a, R: RngCore>(rng: &mut R, max: usize) -> usize {
-
 	(rng.next_u32() % (max as u32 + 1)) as usize
 }
 
@@ -1340,14 +1339,14 @@ impl<T: Config<I>, I: Instance> Module<T, I> {
 					.filter_map(|m| <Votes<T, I>>::take(&candidate, m).map(|v| (v, m)))
 					.inspect(|&(v, _)| if v == Vote::Approve { approval_count += 1 })
 					.collect::<Vec<_>>();
-				votes.into_iter().for_each(|v| {
+				votes.iter().for_each(|v| {
 					println!("+ vote = {:?}", v);
-				})
+				});
 
 				// Select one of the votes at random.
 				// Note that `Vote::Skeptical` and `Vote::Reject` both reject the candidate.
 				let is_accepted = pick_item(&mut rng, &votes).map(|x| x.0) == Some(Vote::Approve);
-				println!("+ accepted? = {:?}", is_accepted);
+				println!("+ [NOT ACCURATE] accepted? = {:?}", is_accepted);
 
 				let matching_vote = if is_accepted { Vote::Approve } else { Vote::Reject };
 
