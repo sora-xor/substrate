@@ -2917,7 +2917,7 @@ mod offchain_election {
 	use parking_lot::RwLock;
 	use sp_core::offchain::{
 		testing::{PoolState, TestOffchainExt, TestTransactionPoolExt},
-		OffchainExt, TransactionPoolExt,
+		OffchainWorkerExt, TransactionPoolExt, OffchainDbExt,
 	};
 	use sp_io::TestExternalities;
 	use sp_npos_elections::StakedAssignment;
@@ -2960,7 +2960,8 @@ mod offchain_election {
 		seed[0..4].copy_from_slice(&iterations.to_le_bytes());
 		offchain_state.write().seed = seed;
 
-		ext.register_extension(OffchainExt::new(offchain));
+		ext.register_extension(OffchainDbExt::new(offchain.clone()));
+		ext.register_extension(OffchainWorkerExt::new(offchain));
 		ext.register_extension(TransactionPoolExt::new(pool));
 
 		pool_state
@@ -4975,6 +4976,43 @@ fn cannot_bond_extra_to_lower_than_ed() {
 			assert_noop!(
 				Staking::bond_extra(Origin::signed(21), 5),
 				Error::<Test>::InsufficientValue,
+			);
+		})
+}
+
+#[test]
+fn do_not_die_when_active_is_ed() {
+	let ed = 10;
+	ExtBuilder::default()
+		.existential_deposit(ed)
+		.build_and_execute(|| {
+			// initial stuff.
+			assert_eq!(
+				Staking::ledger(&20).unwrap(),
+				StakingLedger {
+					stash: 21,
+					total: 1000,
+					active: 1000,
+					unlocking: vec![],
+					claimed_rewards: vec![]
+				}
+			);
+
+			// unbond all of it except ed.
+			assert_ok!(Staking::unbond(Origin::signed(20), 1000 - ed));
+			start_active_era(3);
+			assert_ok!(Staking::withdraw_unbonded(Origin::signed(20), 100));
+
+			// initial stuff.
+			assert_eq!(
+				Staking::ledger(&20).unwrap(),
+				StakingLedger {
+					stash: 21,
+					total: ed,
+					active: ed,
+					unlocking: vec![],
+					claimed_rewards: vec![]
+				}
 			);
 		})
 }

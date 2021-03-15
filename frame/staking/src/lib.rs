@@ -335,13 +335,13 @@ use sp_election_providers::ElectionProvider;
 pub use weights::WeightInfo;
 
 const STAKING_ID: LockIdentifier = *b"staking ";
-pub(crate) const LOG_TARGET: &'static str = "staking";
+pub(crate) const LOG_TARGET: &'static str = "runtime::staking";
 
 // syntactic sugar for logging.
 #[macro_export]
 macro_rules! log {
 	($level:tt, $patter:expr $(, $values:expr)* $(,)?) => {
-		frame_support::debug::$level!(
+		log::$level!(
 			target: crate::LOG_TARGET,
 			concat!("💸 ", $patter) $(, $values)*
 		)
@@ -443,6 +443,8 @@ pub enum RewardDestination<AccountId> {
 	Controller,
 	/// Pay into a specified account.
 	Account(AccountId),
+	/// Receive no reward.
+	None,
 }
 
 impl<AccountId> Default for RewardDestination<AccountId> {
@@ -1363,7 +1365,10 @@ decl_module! {
 				// either current session final based on the plan, or we're forcing.
 				(Self::is_current_session_final() || Self::will_era_be_forced())
 			{
-				if let Some(next_session_change) = T::NextNewSession::estimate_next_new_session(now) {
+				let (maybe_next_session_change, estimate_next_new_session_weight) =
+					T::NextNewSession::estimate_next_new_session(now);
+
+				if let Some(next_session_change) = maybe_next_session_change {
 					if let Some(remaining) = next_session_change.checked_sub(&now) {
 						if remaining <= T::ElectionLookahead::get() && !remaining.is_zero() {
 							// create snapshot.
@@ -1385,7 +1390,7 @@ decl_module! {
 				} else {
 					log!(warn, "Estimating next session change failed.");
 				}
-				add_weight(0, 0, T::NextNewSession::weight(now))
+				add_weight(0, 0, estimate_next_new_session_weight)
 			}
 			// For `era_election_status`, `is_current_session_final`, `will_era_be_forced`
 			add_weight(3, 0, 0);
@@ -1668,7 +1673,7 @@ decl_module! {
 				ledger = ledger.consolidate_unlocked(current_era)
 			}
 
-			let post_info_weight = if ledger.unlocking.is_empty() && ledger.active <= T::Currency::minimum_balance() {
+			let post_info_weight = if ledger.unlocking.is_empty() && ledger.active < T::Currency::minimum_balance() {
 				// This account must have called `unbond()` with some value that caused the active
 				// portion to fall below existential deposit + will have no more unlocking chunks
 				// left. We can now safely remove all staking-related information.
@@ -2499,7 +2504,8 @@ impl<T: Config> Module<T> {
 				}),
 			RewardDestination::Account(dest_account) => {
 				Some(T::Currency::deposit_creating(&dest_account, amount))
-			}
+			},
+			RewardDestination::None => None,
 		}
 	}
 
@@ -2740,8 +2746,8 @@ impl<T: Config> Module<T> {
 		// write new results.
 		<QueuedElected<T>>::put(ElectionResult {
 			elected_stashes: winners,
-			compute,
 			exposures,
+			compute,
 		});
 		QueuedScore::put(submitted_score);
 
@@ -3188,7 +3194,7 @@ impl<T: Config> Module<T> {
 	/// Assumes storage is upgraded before calling.
 	///
 	/// This is called:
-	/// - after a `withdraw_unbond()` call that frees all of a stash's bonded balance.
+	/// - after a `withdraw_unbonded()` call that frees all of a stash's bonded balance.
 	/// - through `reap_stash()` if the balance has fallen to zero (through slashing).
 	fn kill_stash(stash: &T::AccountId, num_slashing_spans: u32) -> DispatchResult {
 		let controller = <Bonded<T>>::get(stash).ok_or(Error::<T>::NotStash)?;
@@ -3362,6 +3368,7 @@ impl<T: Config> sp_election_providers::ElectionDataProvider<T::AccountId, T::Blo
 		let session_length = T::NextNewSession::average_session_length();
 
 		let until_this_session_end = T::NextNewSession::estimate_next_new_session(now)
+			.0
 			.unwrap_or_default()
 			.saturating_sub(now);
 
@@ -3404,30 +3411,30 @@ impl<T: Config> sp_election_providers::ElectionDataProvider<T::AccountId, T::Blo
 /// some session can lag in between the newest session planned and the latest session started.
 impl<T: Config> pallet_session::SessionManager<T::AccountId> for Module<T> {
 	fn new_session(new_index: SessionIndex) -> Option<Vec<T::AccountId>> {
-		frame_support::debug::native::trace!(
-			target: LOG_TARGET,
-			"[{}] planning new_session({})",
+		log!(
+			trace,
+			"[{:?}] planning new_session({})",
 			<frame_system::Module<T>>::block_number(),
-			new_index
+			new_index,
 		);
 		CurrentPlannedSession::put(new_index);
 		Self::new_session(new_index)
 	}
 	fn start_session(start_index: SessionIndex) {
-		frame_support::debug::native::trace!(
-			target: LOG_TARGET,
-			"[{}] starting start_session({})",
+		log!(
+			trace,
+			"[{:?}] starting start_session({})",
 			<frame_system::Module<T>>::block_number(),
-			start_index
+			start_index,
 		);
 		Self::start_session(start_index)
 	}
 	fn end_session(end_index: SessionIndex) {
-		frame_support::debug::native::trace!(
-			target: LOG_TARGET,
-			"[{}] ending end_session({})",
+		log!(
+			trace,
+			"[{:?}] ending end_session({})",
 			<frame_system::Module<T>>::block_number(),
-			end_index
+			end_index,
 		);
 		Self::end_session(end_index)
 	}
