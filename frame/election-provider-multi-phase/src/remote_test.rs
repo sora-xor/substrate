@@ -209,6 +209,7 @@ async fn polkadot() {
 
 	ext.execute_with(|| {
 		// Kill the QueuedElected storage item if needed.
+		<multi_phase::QueuedSolution<Runtime>>::kill();
 		let result = ElectionProviderMultiPhase::mine_check_and_submit().unwrap();
 	});
 }
