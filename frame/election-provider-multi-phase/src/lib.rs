@@ -245,6 +245,8 @@ use sp_arithmetic::{
 mod benchmarking;
 #[cfg(test)]
 mod mock;
+#[cfg(test)]
+mod remote_test;
 #[macro_use]
 pub mod helpers;
 

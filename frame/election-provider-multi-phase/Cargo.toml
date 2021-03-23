@@ -44,6 +44,9 @@ sp-tracing = { version = "3.0.0", path = "../../primitives/tracing" }
 frame-election-provider-support = { version = "3.0.0", features = ["runtime-benchmarks"], path = "../election-provider-support" }
 pallet-balances = { version = "3.0.0", path = "../balances" }
 frame-benchmarking = { version = "3.1.0", path = "../benchmarking" }
+remote-externalities = { version = "0.9.0", path = "../../utils/frame/remote-externalities" }
+tokio = { version = "0.2.4", features = ["macros"] }
+# kusama-runtime = { git = "https://github.com/paritytech/polkadot", rev = "72ce1c82cdfd276f76bda543302911e86b5c5707" }
 
 [features]
 default = ["std"]

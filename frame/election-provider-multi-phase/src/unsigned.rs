@@ -74,9 +74,10 @@ impl<T: Config> Pallet<T> {
 			Call::submit_unsigned(raw_solution, witness).into();
 		log!(
 			info,
-			"mined a solution with score {:?} and size {}",
+			"mined a solution with {} iterations, score {:?} and size {}",
+			iters,
 			score,
-			call.using_encoded(|b| b.len())
+			call.using_encoded(|b| b.len()),
 		);
 
 		SubmitTransaction::<T, Call<T>>::submit_unsigned_transaction(call)
@@ -165,18 +166,16 @@ impl<T: Config> Pallet<T> {
 
 		let size =
 			SolutionOrSnapshotSize { voters: voters.len() as u32, targets: targets.len() as u32 };
+
+		// trim weight
 		let maximum_allowed_voters = Self::maximum_voter_for_weight::<T::WeightInfo>(
 			desired_targets,
 			size,
 			T::MinerMaxWeight::get(),
 		);
-		log!(
-			debug,
-			"miner: current compact solution voters = {}, maximum_allowed = {}",
-			compact.voter_count(),
-			maximum_allowed_voters,
-		);
 		let compact = Self::trim_compact_weight(maximum_allowed_voters, compact, &voter_index)?;
+
+		// trim length
 		let compact = Self::trim_compact_length(
 			T::MinerMaxLength::get(),
 			compact,
@@ -259,10 +258,12 @@ impl<T: Config> Pallet<T> {
 					}
 				}
 
+				log!(debug, "removed {} voter to meet the max weight limit.", to_remove);
 				Ok(compact)
 			}
 			_ => {
 				// nada, return as-is
+				log!(debug, "Didn't remove any voter for weight limits.");
 				Ok(compact)
 			}
 		}
@@ -286,6 +287,7 @@ impl<T: Config> Pallet<T> {
 		// short-circuit to avoid getting the voters if possible
 		// this involves a redundant encoding, but that should hopefully be relatively cheap
 		if (compact.encode().len().saturated_into::<u32>()) < max_allowed_length {
+			log!(debug, "Didn't remove any voters for length limit.");
 			return Ok(compact);
 		}
 
@@ -298,13 +300,16 @@ impl<T: Config> Pallet<T> {
 			.collect::<Vec<_>>();
 		voters_sorted.sort_by_key(|(_, y)| *y);
 		voters_sorted.reverse();
+		let mut removed = 0;
 
 		while compact.encoded_size() > max_allowed_length.saturated_into() {
 			let (smallest_stake_voter, _) = voters_sorted.pop().ok_or(MinerError::NoMoreVoters)?;
 			let index = voter_index(&smallest_stake_voter).ok_or(MinerError::SnapshotUnAvailable)?;
 			compact.remove_voter(index);
+			removed += 1;
 		}
 
+		log!(debug, "removed {} voter to meet the max length limit.", removed);
 		Ok(compact)
 	}
 

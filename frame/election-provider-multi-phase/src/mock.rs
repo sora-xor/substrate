@@ -198,7 +198,6 @@ parameter_types! {
 	pub static DesiredTargets: u32 = 2;
 	pub static SignedPhase: u64 = 10;
 	pub static UnsignedPhase: u64 = 5;
-	pub static MaxSignedSubmissions: u32 = 5;
 
 	pub static MinerMaxIterations: u32 = 5;
 	pub static MinerTxPriority: u64 = 100;
