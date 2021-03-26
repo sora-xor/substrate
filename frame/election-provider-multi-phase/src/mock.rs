@@ -198,12 +198,12 @@ parameter_types! {
 	pub static DesiredTargets: u32 = 2;
 	pub static SignedPhase: u64 = 10;
 	pub static UnsignedPhase: u64 = 5;
-	pub static MaxSignedSubmissions: u32 = 5;
 
 	pub static MinerMaxIterations: u32 = 5;
 	pub static MinerTxPriority: u64 = 100;
 	pub static SolutionImprovementThreshold: Perbill = Perbill::zero();
 	pub static MinerMaxWeight: Weight = BlockWeights::get().max_block;
+	pub static MinerMaxLength: u32 = 256;
 	pub static MockWeightInfo: bool = false;
 
 
@@ -276,6 +276,7 @@ impl crate::Config for Runtime {
 	type SolutionImprovementThreshold = SolutionImprovementThreshold;
 	type MinerMaxIterations = MinerMaxIterations;
 	type MinerMaxWeight = MinerMaxWeight;
+	type MinerMaxLength = MinerMaxLength;
 	type MinerTxPriority = MinerTxPriority;
 	type DataProvider = StakingMock;
 	type WeightInfo = DualMockWeightInfo;
