@@ -86,6 +86,60 @@ parameter_types! {
 	pub static MockWeightInfo: bool = false;
 }
 
+use frame_support::{traits::Get};
+use sp_std::marker::PhantomData;
+
+pub struct PolkadotV29Weight<T>(PhantomData<T>);
+impl<T: frame_system::Config> multi_phase::WeightInfo for PolkadotV29Weight<T> {
+	fn on_initialize_nothing() -> Weight {
+		(20_985_000 as Weight)
+			.saturating_add(T::DbWeight::get().reads(7 as Weight))
+	}
+	fn on_initialize_open_signed() -> Weight {
+		(70_912_000 as Weight)
+			.saturating_add(T::DbWeight::get().reads(7 as Weight))
+			.saturating_add(T::DbWeight::get().writes(4 as Weight))
+	}
+	fn on_initialize_open_unsigned_with_snapshot() -> Weight {
+		(70_069_000 as Weight)
+			.saturating_add(T::DbWeight::get().reads(7 as Weight))
+			.saturating_add(T::DbWeight::get().writes(4 as Weight))
+	}
+	fn on_initialize_open_unsigned_without_snapshot() -> Weight {
+		(18_773_000 as Weight)
+			.saturating_add(T::DbWeight::get().reads(1 as Weight))
+			.saturating_add(T::DbWeight::get().writes(1 as Weight))
+	}
+	fn elect_queued() -> Weight {
+		todo!()
+	}
+	fn submit_unsigned(v: u32, t: u32, a: u32, d: u32, ) -> Weight {
+		(0 as Weight)
+			// Standard Error: 22_000
+			.saturating_add((4_166_000 as Weight).saturating_mul(v as Weight))
+			// Standard Error: 74_000
+			.saturating_add((116_000 as Weight).saturating_mul(t as Weight))
+			// Standard Error: 22_000
+			.saturating_add((13_966_000 as Weight).saturating_mul(a as Weight))
+			// Standard Error: 111_000
+			.saturating_add((4_713_000 as Weight).saturating_mul(d as Weight))
+			.saturating_add(T::DbWeight::get().reads(6 as Weight))
+			.saturating_add(T::DbWeight::get().writes(1 as Weight))
+	}
+	fn feasibility_check(v: u32, t: u32, a: u32, d: u32, ) -> Weight {
+		(0 as Weight)
+			// Standard Error: 12_000
+			.saturating_add((4_283_000 as Weight).saturating_mul(v as Weight))
+			// Standard Error: 40_000
+			.saturating_add((763_000 as Weight).saturating_mul(t as Weight))
+			// Standard Error: 12_000
+			.saturating_add((10_442_000 as Weight).saturating_mul(a as Weight))
+			// Standard Error: 61_000
+			.saturating_add((4_521_000 as Weight).saturating_mul(d as Weight))
+			.saturating_add(T::DbWeight::get().reads(3 as Weight))
+	}
+}
+
 // Hopefully this won't be too much of a hassle to maintain.
 pub struct DualMockWeightInfo;
 impl multi_phase::weights::WeightInfo for DualMockWeightInfo {
@@ -93,49 +147,49 @@ impl multi_phase::weights::WeightInfo for DualMockWeightInfo {
 		if MockWeightInfo::get() {
 			Zero::zero()
 		} else {
-			<() as multi_phase::weights::WeightInfo>::on_initialize_nothing()
+			PolkadotV29Weight::<Runtime>::on_initialize_nothing()
 		}
 	}
 	fn on_initialize_open_signed() -> Weight {
 		if MockWeightInfo::get() {
 			Zero::zero()
 		} else {
-			<() as multi_phase::weights::WeightInfo>::on_initialize_open_signed()
+			PolkadotV29Weight::<Runtime>::on_initialize_open_signed()
 		}
 	}
 	fn on_initialize_open_unsigned_with_snapshot() -> Weight {
 		if MockWeightInfo::get() {
 			Zero::zero()
 		} else {
-			<() as multi_phase::weights::WeightInfo>::on_initialize_open_unsigned_with_snapshot()
+			PolkadotV29Weight::<Runtime>::on_initialize_open_unsigned_with_snapshot()
 		}
 	}
 	fn on_initialize_open_unsigned_without_snapshot() -> Weight {
 		if MockWeightInfo::get() {
 			Zero::zero()
 		} else {
-			<() as multi_phase::weights::WeightInfo>::on_initialize_open_unsigned_without_snapshot()
+			PolkadotV29Weight::<Runtime>::on_initialize_open_unsigned_without_snapshot()
 		}
 	}
 	fn elect_queued() -> Weight {
 		if MockWeightInfo::get() {
 			Zero::zero()
 		} else {
-			<() as multi_phase::weights::WeightInfo>::elect_queued()
+			PolkadotV29Weight::<Runtime>::elect_queued()
 		}
 	}
 	fn submit_unsigned(v: u32, t: u32, a: u32, d: u32) -> Weight {
 		if MockWeightInfo::get() {
 			0
 		} else {
-			<() as multi_phase::weights::WeightInfo>::submit_unsigned(v, t, a, d)
+			PolkadotV29Weight::<Runtime>::submit_unsigned(v, t, a, d)
 		}
 	}
 	fn feasibility_check(v: u32, t: u32, a: u32, d: u32) -> Weight {
 		if MockWeightInfo::get() {
 			0
 		} else {
-			<() as multi_phase::weights::WeightInfo>::feasibility_check(v, t, a, d)
+			PolkadotV29Weight::<Runtime>::feasibility_check(v, t, a, d)
 		}
 	}
 }
@@ -169,35 +223,41 @@ pub type Extrinsic = sp_runtime::testing::TestXt<Call, ()>;
 
 #[tokio::test]
 async fn polkadot() {
-	use remote_externalities::{Mode, CacheConfig, OfflineConfig};
+	use remote_externalities::{Mode, SnapshotConfig, OfflineConfig};
 	sp_tracing::try_init_simple();
-	let mut ext = remote_externalities::Builder::new()
-	.mode(Mode::Offline(OfflineConfig {
-		cache: CacheConfig {
-			name: "kusama@0x03822d2fdc281d420d3136afb561c5977f08709da4c7c91841c5737b464f4ad4"
+
+	let online = Mode::Online::<Block>(remote_externalities::OnlineConfig {
+		uri: "http://substrate-archive-0.parity-vpn.parity.io:9934/".into(),
+		at: Some(
+			// https://polkadot.subscan.io/block/4355787
+			hex_literal::hex!["01f6cacfa73203e5ed607e385058bceb328bf4486b6e2a3f7ba1e8c9e7a69661"]
+				.into(),
+		),
+		state_snapshot: Some(SnapshotConfig {
+			name: "polkadot@01f6cacfa73203e5ed607e385058bceb328bf4486b6e2a3f7ba1e8c9e7a69661"
+				.into(),
+			directory: ".".into(),
+		}),
+		modules: vec!["ElectionProviderMultiPhase".into()],
+		..Default::default()
+	});
+
+	let _offline = Mode::Offline::<Block>(OfflineConfig {
+		state_snapshot: SnapshotConfig {
+			name: "polkadot@01f6cacfa73203e5ed607e385058bceb328bf4486b6e2a3f7ba1e8c9e7a69661"
 				.into(),
 			directory: ".".into(),
 		}
-	}))
-	// .mode(Mode::Online(remote_externalities::OnlineConfig {
-	// 	uri: "http://substrate-archive-0.parity-vpn.parity.io:9933/".into(),
-	// 	at: Some(
-	// 		hex_literal::hex!["03822d2fdc281d420d3136afb561c5977f08709da4c7c91841c5737b464f4ad4"]
-	// 			.into(),
-	// 	),
-	// 	cache: Some(CacheConfig {
-	// 		name: "kusama@0x03822d2fdc281d420d3136afb561c5977f08709da4c7c91841c5737b464f4ad4"
-	// 			.into(),
-	// 		directory: ".".into(),
-	// 	}),
-	// 	..Default::default()
-	// }))
-	.build()
-	.await
-	.unwrap();
+	});
+
+	let mut ext = remote_externalities::Builder::new()
+		.mode(online)
+		.build()
+		.await
+		.unwrap();
 
 	let (offchain, offchain_state) = TestOffchainExt::new();
-	let (pool, pool_state) = TestTransactionPoolExt::new();
+	let (pool, _) = TestTransactionPoolExt::new();
 
 	let mut seed = [0_u8; 32];
 	seed[0..4].copy_from_slice(&20u32.to_le_bytes());
