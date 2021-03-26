@@ -167,6 +167,7 @@ impl<T: Config> Pallet<T> {
 		let size =
 			SolutionOrSnapshotSize { voters: voters.len() as u32, targets: targets.len() as u32 };
 
+		log!(debug, "initial solution voters: {}, snapshot size = {:?}", compact.voter_count(), size);
 		// trim weight
 		let maximum_allowed_voters = Self::maximum_voter_for_weight::<T::WeightInfo>(
 			desired_targets,

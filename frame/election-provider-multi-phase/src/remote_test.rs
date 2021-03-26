@@ -81,7 +81,7 @@ impl pallet_balances::Config for Runtime {
 parameter_types! {
 	pub static Fallback: FallbackStrategy = FallbackStrategy::OnChain;
 	pub static MinerMaxWeight: Weight = BlockWeights::get().max_block;
-	pub static MinerMaxLength: u32 = 22 * 1024;
+	pub static MinerMaxLength: u32 = 2 * 1024 * 1024;
 	pub static MinerMaxIterations: u32 = 20;
 	pub static MockWeightInfo: bool = false;
 }
@@ -251,7 +251,7 @@ async fn polkadot() {
 	});
 
 	let mut ext = remote_externalities::Builder::new()
-		.mode(online)
+		.mode(_offline)
 		.build()
 		.await
 		.unwrap();
