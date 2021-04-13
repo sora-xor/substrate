@@ -74,6 +74,11 @@ mod debug_helper {
 	}
 }
 
+/// A wrapper for `KeyArgs` in storage traits. Only wraps `EncodeLike<T>` and some additional
+/// bounds.
+pub trait EncodeLikeOf<T: FullEncode>: EncodeLike<T> + Clone {}
+impl<T: FullEncode, E: EncodeLike<T> + Clone> EncodeLikeOf<T> for E {}
+
 /// Assert this method is called within a storage transaction.
 /// This will **panic** if is not called within a storage transaction.
 ///
@@ -224,10 +229,10 @@ pub trait StorageMap<K: FullEncode, V: FullCodec> {
 	fn swap<KeyArg1: EncodeLike<K>, KeyArg2: EncodeLike<K>>(key1: KeyArg1, key2: KeyArg2);
 
 	/// Store a value to be associated with the given key from the map.
-	fn insert<KeyArg: EncodeLike<K>, ValArg: EncodeLike<V>>(key: KeyArg, val: ValArg);
+	fn insert<KeyArg: EncodeLikeOf<K>, ValArg: EncodeLike<V>>(key: KeyArg, val: ValArg);
 
 	/// Remove the value under a key.
-	fn remove<KeyArg: EncodeLike<K>>(key: KeyArg);
+	fn remove<KeyArg: EncodeLikeOf<K>>(key: KeyArg);
 
 	/// Mutate the value under a key.
 	fn mutate<KeyArg: EncodeLike<K>, R, F: FnOnce(&mut Self::Query) -> R>(key: KeyArg, f: F) -> R;
@@ -250,7 +255,7 @@ pub trait StorageMap<K: FullEncode, V: FullCodec> {
 	) -> Result<R, E>;
 
 	/// Take the value under a key.
-	fn take<KeyArg: EncodeLike<K>>(key: KeyArg) -> Self::Query;
+	fn take<KeyArg: EncodeLikeOf<K>>(key: KeyArg) -> Self::Query;
 
 	/// Append the given items to the value in the storage.
 	///

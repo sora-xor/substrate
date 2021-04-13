@@ -181,6 +181,8 @@ impl pallet_staking::Config for Test {
 	type NextNewSession = Session;
 	type MaxNominatorRewardedPerValidator = MaxNominatorRewardedPerValidator;
 	type ElectionProvider = onchain::OnChainSequentialPhragmen<Self>;
+	type MaxValidators = ();
+	type MaxNominators = ();
 	type WeightInfo = ();
 }
 

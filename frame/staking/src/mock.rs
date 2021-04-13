@@ -258,6 +258,8 @@ impl Config for Test {
 	type NextNewSession = Session;
 	type MaxNominatorRewardedPerValidator = MaxNominatorRewardedPerValidator;
 	type ElectionProvider = onchain::OnChainSequentialPhragmen<Self>;
+	type MaxNominators = (); // no limit
+	type MaxValidators = (); // no limit
 	type WeightInfo = ();
 }
 

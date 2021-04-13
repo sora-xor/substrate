@@ -18,16 +18,84 @@
 //! Storage map type. Implements StorageMap, StorageIterableMap, StoragePrefixedMap traits and their
 //! methods directly.
 
-use codec::{FullCodec, Decode, EncodeLike, Encode};
+use codec::{FullCodec, FullEncode, Decode, EncodeLike, Encode};
 use crate::{
 	storage::{
 		StorageAppend, StorageDecodeLength,
 		types::{OptionQuery, QueryKindTrait, OnEmptyGetter},
+		unhashed,
 	},
 	traits::{GetDefault, StorageInstance},
+	hash::{Twox128, StorageHasher},
 };
 use frame_metadata::{DefaultByteGetter, StorageEntryModifier};
 use sp_std::prelude::*;
+
+/// Storage map hooks.
+///
+/// An implementation of this can be integrated into a storage map, and perform some actions
+/// per/post insertion/removal of storage keys.
+pub trait StorageMapHooks<Key: FullEncode> {
+	/// A key **has been** inserted; do something about tit.
+	fn post_insert<KeyArg: EncodeLike<Key>>(pallet: &'static [u8], storage: &'static [u8], key: KeyArg);
+	/// A key **has been** removed; do something about tit.
+	fn post_remove<KeyArg: EncodeLike<Key>>(pallet: &'static [u8], storage: &'static [u8], key: KeyArg);
+}
+
+/// A hook that does.. nothing 🤷🏻‍♂️.
+pub struct Nothing<Key>(sp_std::marker::PhantomData<Key>);
+impl<Key: FullEncode> StorageMapHooks<Key> for Nothing<Key> {
+	fn post_insert<KeyArg: EncodeLike<Key>>(_: &'static [u8], _: &'static [u8], _: KeyArg) {}
+	fn post_remove<KeyArg: EncodeLike<Key>>(_: &'static [u8], _: &'static [u8], _: KeyArg) {}
+}
+
+/// A counter implemented as [`StorageMapHooks`].
+///
+/// It will generate a new `u32` storage value at `hash(pallet) ++ hash(storage + SUFFIX)`. Upon
+/// each insertion, this value is incremented and upon each removal decremented.
+pub struct StorageMapCounter<Key>(sp_std::marker::PhantomData<Key>);
+impl<Key: FullEncode> StorageMapCounter<Key> {
+	/// Fixed suffix used to generate the storage key.
+	const SUFFIX: &'static [u8] = b"__COUNTER__";
+
+	/// Get the storage key to store the counter.
+	fn key_for(pallet: &'static [u8], storage: &'static [u8]) -> Vec<u8> {
+		let pallet = Twox128::hash(pallet);
+		let mut map_name = storage.to_vec();
+		map_name.extend(Self::SUFFIX);
+		let suffix = Twox128::hash(&map_name);
+
+		let mut final_key = Vec::with_capacity(pallet.len() + suffix.len());
+		final_key.extend_from_slice(&pallet[..]);
+		final_key.extend_from_slice(&suffix[..]);
+
+		final_key
+	}
+
+	/// Re-iterate the map manually, and set an initial value for the counter.
+	///
+	/// Note that this is an expensive operation and may consume a lot of weight; use only once to
+	/// create a counter for an already existing map.
+	fn initiate() {
+		// This one's a bit more tricky to implement...
+		todo!()
+	}
+}
+
+impl<Key: FullEncode> StorageMapHooks<Key> for StorageMapCounter<Key> {
+	fn post_insert<KeyArg: EncodeLike<Key>>(pallet: &'static [u8], storage: &'static [u8], _: KeyArg) {
+		let key = Self::key_for(pallet, storage);
+		let mut counter = unhashed::get::<u32>(&key).unwrap_or_default();
+		counter += 1u32;
+		unhashed::put(&key, &counter);
+	}
+	fn post_remove<KeyArg: EncodeLike<Key>>(pallet: &'static [u8], storage: &'static [u8], _: KeyArg) {
+		let key = Self::key_for(pallet, storage);
+		let mut counter = unhashed::get::<u32>(&key).unwrap_or_default();
+		counter -= 1;
+		unhashed::put(&key, &counter);
+	}
+}
 
 /// A type that allow to store value for given key. Allowing to insert/remove/iterate on values.
 ///
@@ -42,23 +110,25 @@ use sp_std::prelude::*;
 ///
 /// If the keys are not trusted (e.g. can be set by a user), a cryptographic `hasher` such as
 /// `blake2_128_concat` must be used.  Otherwise, other values in storage can be compromised.
-pub struct StorageMap<Prefix, Hasher, Key, Value, QueryKind=OptionQuery, OnEmpty=GetDefault>(
-	core::marker::PhantomData<(Prefix, Hasher, Key, Value, QueryKind, OnEmpty)>
+pub struct StorageMap<Prefix, Hasher, Key, Value, QueryKind=OptionQuery, OnEmpty=GetDefault, Hooks=Nothing<Key>>(
+	core::marker::PhantomData<(Prefix, Hasher, Key, Value, QueryKind, OnEmpty, Hooks)>
 );
 
-impl<Prefix, Hasher, Key, Value, QueryKind, OnEmpty>
+impl<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, Hooks>
 	crate::storage::generator::StorageMap<Key, Value>
-	for StorageMap<Prefix, Hasher, Key, Value, QueryKind, OnEmpty>
+	for StorageMap<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, Hooks>
 where
 	Prefix: StorageInstance,
 	Hasher: crate::hash::StorageHasher,
 	Key: FullCodec,
 	Value: FullCodec,
 	QueryKind: QueryKindTrait<Value, OnEmpty>,
+	Hooks: StorageMapHooks<Key>,
 	OnEmpty: crate::traits::Get<QueryKind::Query> + 'static,
 {
 	type Query = QueryKind::Query;
 	type Hasher = Hasher;
+	type Hooks = Hooks;
 	fn module_prefix() -> &'static [u8] {
 		Prefix::pallet_prefix().as_bytes()
 	}
@@ -129,12 +199,12 @@ where
 	}
 
 	/// Store a value to be associated with the given key from the map.
-	pub fn insert<KeyArg: EncodeLike<Key>, ValArg: EncodeLike<Value>>(key: KeyArg, val: ValArg) {
+	pub fn insert<KeyArg: crate::storage::EncodeLikeOf<Key>, ValArg: EncodeLike<Value>>(key: KeyArg, val: ValArg) {
 		<Self as crate::storage::StorageMap<Key, Value>>::insert(key, val)
 	}
 
 	/// Remove the value under a key.
-	pub fn remove<KeyArg: EncodeLike<Key>>(key: KeyArg) {
+	pub fn remove<KeyArg: crate::storage::EncodeLikeOf<Key>>(key: KeyArg) {
 		<Self as crate::storage::StorageMap<Key, Value>>::remove(key)
 	}
 
@@ -173,7 +243,7 @@ where
 	}
 
 	/// Take the value under a key.
-	pub fn take<KeyArg: EncodeLike<Key>>(key: KeyArg) -> QueryKind::Query {
+	pub fn take<KeyArg: crate::storage::EncodeLikeOf<Key>>(key: KeyArg) -> QueryKind::Query {
 		<Self as crate::storage::StorageMap<Key, Value>>::take(key)
 	}
 
@@ -230,7 +300,7 @@ where
 
 	/// Iter over all value of the storage.
 	///
-	/// NOTE: If a value failed to decode becaues storage is corrupted then it is skipped.
+	/// NOTE: If a value failed to decode because storage is corrupted then it is skipped.
 	pub fn iter_values() -> crate::storage::PrefixIterator<Value> {
 		<Self as crate::storage::StoragePrefixedMap<Value>>::iter_values()
 	}

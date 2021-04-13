@@ -26,7 +26,7 @@ mod map;
 mod double_map;
 
 pub use value::{StorageValue, StorageValueMetadata};
-pub use map::{StorageMap, StorageMapMetadata};
+pub use map::{StorageMap, StorageMapMetadata, Nothing, StorageMapHooks};
 pub use double_map::{StorageDoubleMap, StorageDoubleMapMetadata};
 
 /// Trait implementing how the storage optional value is converted into the queried type.

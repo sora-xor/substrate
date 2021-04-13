@@ -20,7 +20,7 @@ use sp_std::prelude::*;
 use sp_std::borrow::Borrow;
 use codec::{FullCodec, FullEncode, Decode, Encode, EncodeLike};
 use crate::{
-	storage::{self, unhashed, StorageAppend, PrefixIterator},
+	storage::{self, unhashed, StorageAppend, PrefixIterator, EncodeLikeOf, types::StorageMapHooks},
 	Never, hash::{StorageHasher, Twox128, ReversibleStorageHasher},
 };
 
@@ -41,6 +41,9 @@ pub trait StorageMap<K: FullEncode, V: FullCodec> {
 
 	/// Hasher. Used for generating final key.
 	type Hasher: StorageHasher;
+
+	/// Hooks to be executed upon insert and remove.
+	type Hooks: storage::types::StorageMapHooks<K>;
 
 	/// Module prefix. Used for generating final key.
 	fn module_prefix() -> &'static [u8];
@@ -87,6 +90,24 @@ pub trait StorageMap<K: FullEncode, V: FullCodec> {
 		final_key.extend_from_slice(key_hashed.as_ref());
 
 		final_key
+	}
+
+	/// `key` has been added to this map; trigger the post-insert hook.
+	fn post_insert<KeyArg: EncodeLikeOf<K>>(key: KeyArg) {
+	Self::Hooks::post_insert(
+			Self::module_prefix(),
+			Self::storage_prefix(),
+			key,
+		);
+	}
+
+	/// `key` has been removed from this map; trigger the post-remove hook.
+	fn post_remove<KeyArg: EncodeLikeOf<K>>(key: KeyArg) {
+		Self::Hooks::post_remove(
+			Self::module_prefix(),
+			Self::storage_prefix(),
+			key,
+		);
 	}
 }
 
@@ -230,12 +251,14 @@ impl<K: FullEncode, V: FullCodec, G: StorageMap<K, V>> storage::StorageMap<K, V>
 		unhashed::get(Self::storage_map_final_key(key).as_ref()).ok_or(())
 	}
 
-	fn insert<KeyArg: EncodeLike<K>, ValArg: EncodeLike<V>>(key: KeyArg, val: ValArg) {
-		unhashed::put(Self::storage_map_final_key(key).as_ref(), &val)
+	fn insert<KeyArg: EncodeLikeOf<K>, ValArg: EncodeLike<V>>(key: KeyArg, val: ValArg) {
+		unhashed::put(Self::storage_map_final_key(key.clone()).as_ref(), &val);
+		<Self as StorageMap<K ,V>>::post_insert(key);
 	}
 
-	fn remove<KeyArg: EncodeLike<K>>(key: KeyArg) {
-		unhashed::kill(Self::storage_map_final_key(key).as_ref())
+	fn remove<KeyArg: EncodeLikeOf<K>>(key: KeyArg) {
+		unhashed::kill(Self::storage_map_final_key(key.clone()).as_ref());
+		<Self as StorageMap<K ,V>>::post_remove(key);
 	}
 
 	fn mutate<KeyArg: EncodeLike<K>, R, F: FnOnce(&mut Self::Query) -> R>(key: KeyArg, f: F) -> R {
@@ -280,9 +303,10 @@ impl<K: FullEncode, V: FullCodec, G: StorageMap<K, V>> storage::StorageMap<K, V>
 		ret
 	}
 
-	fn take<KeyArg: EncodeLike<K>>(key: KeyArg) -> Self::Query {
-		let key = Self::storage_map_final_key(key);
-		let value = unhashed::take(key.as_ref());
+	fn take<KeyArg: EncodeLikeOf<K>>(key: KeyArg) -> Self::Query {
+		let final_key = Self::storage_map_final_key(key.clone());
+		let value = unhashed::take(final_key.as_ref());
+		<Self as StorageMap<K ,V>>::post_remove(key);
 		G::from_optional_value_to_query(value)
 	}
 

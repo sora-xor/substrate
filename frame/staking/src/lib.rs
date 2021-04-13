@@ -787,6 +787,18 @@ pub trait Config: frame_system::Config + SendTransactionTypes<Call<Self>> {
 	/// their reward. This used to limit the i/o cost for the nominator payout.
 	type MaxNominatorRewardedPerValidator: Get<u32>;
 
+	/// The maximum number of validators that this pallet will accept.
+	///
+	/// Note that any number of accounts can bond; this limit will only prevent too many validators
+	/// to become candidates.
+	///
+	/// No mechanism to resolve congestion is provided at this moment; should only be used by
+	/// parachains to prevent to prevent too big staking blocks.
+	type MaxValidators: Get<Option<u32>>;
+
+	/// Same as [`Config::MaxValidators`], but for nominators.
+	type MaxNominators: Get<Option<u32>>;
+
 	/// Weight information for extrinsics in this pallet.
 	type WeightInfo: WeightInfo;
 }
@@ -870,6 +882,12 @@ decl_storage! {
 		/// The map from nominator stash key to the set of stash keys of all validators to nominate.
 		pub Nominators get(fn nominators):
 			map hasher(twox_64_concat) T::AccountId => Option<Nominations<T::AccountId>>;
+
+		/// Counter that tracks the [`Validators`] map.
+		pub ValidatorCounter get(fn validator_counter): u32;
+
+		/// Counter that tracks the [`Nominators`] map.
+		pub NominatorCounter get(fn nominator_counter): u32;
 
 		/// The current era index.
 		///

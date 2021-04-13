@@ -125,6 +125,7 @@ pub fn decl_and_impl(scrate: &TokenStream, def: &DeclStorageDefExt) -> TokenStre
 			},
 			StorageLineTypeDef::Map(map) => {
 				let hasher = map.hasher.to_storage_hasher_struct();
+				let key = &map.key;
 				quote!(
 					impl<#impl_trait> #scrate::storage::StoragePrefixedMap<#value_type>
 						for #storage_struct #optional_storage_where_clause
@@ -143,6 +144,7 @@ pub fn decl_and_impl(scrate: &TokenStream, def: &DeclStorageDefExt) -> TokenStre
 					{
 						type Query = #query_type;
 						type Hasher = #scrate::#hasher;
+						type Hooks = #scrate::storage::types::Nothing<#key>;
 
 						fn module_prefix() -> &'static [u8] {
 							<#instance_or_inherent as #scrate::traits::Instance>::PREFIX.as_bytes()
@@ -182,9 +184,7 @@ pub fn decl_and_impl(scrate: &TokenStream, def: &DeclStorageDefExt) -> TokenStre
 					#optional_storage_where_clause
 					{
 						type Query = #query_type;
-
 						type Hasher1 = #scrate::#hasher1;
-
 						type Hasher2 = #scrate::#hasher2;
 
 						fn module_prefix() -> &'static [u8] {

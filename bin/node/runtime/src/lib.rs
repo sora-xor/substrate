@@ -496,6 +496,8 @@ impl pallet_staking::Config for Runtime {
 	type NextNewSession = Session;
 	type MaxNominatorRewardedPerValidator = MaxNominatorRewardedPerValidator;
 	type ElectionProvider = ElectionProviderMultiPhase;
+	type MaxValidators = ();
+	type MaxNominators = ();
 	type WeightInfo = pallet_staking::weights::SubstrateWeight<Runtime>;
 }
 
