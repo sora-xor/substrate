@@ -7812,6 +7812,7 @@ dependencies = [
  "hash-db",
  "jsonrpc-core",
  "jsonrpc-pubsub",
+ "jsonrpsee-ws-server",
  "lazy_static",
  "log",
  "parity-scale-codec",
