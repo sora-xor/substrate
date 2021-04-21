@@ -18,6 +18,7 @@
 //! Tools for analyzing the benchmark results.
 
 use std::collections::BTreeMap;
+use core::convert::TryFrom;
 use linregress::{FormulaRegressionBuilder, RegressionDataBuilder};
 use crate::BenchmarkResults;
 
@@ -31,11 +32,47 @@ pub struct Analysis {
 	pub model: Option<RegressionModel>,
 }
 
+#[derive(Clone, Copy)]
 pub enum BenchmarkSelector {
 	ExtrinsicTime,
 	StorageRootTime,
 	Reads,
 	Writes,
+	ProofSize,
+}
+
+#[derive(Debug)]
+pub enum AnalysisChoice {
+	/// Use minimum squares regression for analyzing the benchmarking results.
+	MinSquares,
+	/// Use median slopes for analyzing the benchmarking results.
+	MedianSlopes,
+	/// Use the maximum values among all other analysis functions for the benchmarking results.
+	Max,
+}
+
+impl Default for AnalysisChoice {
+	fn default() -> Self {
+		AnalysisChoice::MinSquares
+	}
+}
+
+impl TryFrom<Option<String>> for AnalysisChoice {
+	type Error = &'static str;
+
+	fn try_from(s: Option<String>) -> Result<Self, Self::Error> {
+		match s {
+			None => Ok(AnalysisChoice::default()),
+			Some(i) => {
+				match &i[..] {
+					"min-squares" | "min_squares" => Ok(AnalysisChoice::MinSquares),
+					"median-slopes" | "median_slopes" => Ok(AnalysisChoice::MedianSlopes),
+					"max" => Ok(AnalysisChoice::Max),
+					_ => Err("invalid analysis string")
+				}
+			}
+		}
+	}
 }
 
 impl Analysis {
@@ -50,6 +87,7 @@ impl Analysis {
 				BenchmarkSelector::StorageRootTime => result.storage_root_time,
 				BenchmarkSelector::Reads => result.reads.into(),
 				BenchmarkSelector::Writes => result.writes.into(),
+				BenchmarkSelector::ProofSize => result.proof_size.into(),
 			}
 		).collect();
 
@@ -90,6 +128,7 @@ impl Analysis {
 						BenchmarkSelector::StorageRootTime => result.storage_root_time,
 						BenchmarkSelector::Reads => result.reads.into(),
 						BenchmarkSelector::Writes => result.writes.into(),
+						BenchmarkSelector::ProofSize => result.proof_size.into(),
 					};
 					(result.components[i].1, data)
 				})
@@ -154,6 +193,7 @@ impl Analysis {
 					BenchmarkSelector::StorageRootTime => result.storage_root_time,
 					BenchmarkSelector::Reads => result.reads.into(),
 					BenchmarkSelector::Writes => result.writes.into(),
+					BenchmarkSelector::ProofSize => result.proof_size.into(),
 				})
 		}
 
@@ -213,6 +253,39 @@ impl Analysis {
 			names,
 			value_dists: Some(value_dists),
 			model: Some(model),
+		})
+	}
+
+	pub fn max(r: &Vec<BenchmarkResults>, selector: BenchmarkSelector) -> Option<Self> {
+		let median_slopes = Self::median_slopes(r, selector);
+		let min_squares = Self::min_squares_iqr(r, selector);
+
+		if median_slopes.is_none() || min_squares.is_none() {
+			return None;
+		}
+
+		let median_slopes = median_slopes.unwrap();
+		let min_squares = min_squares.unwrap();
+
+		let base = median_slopes.base.max(min_squares.base);
+		let slopes = median_slopes.slopes.into_iter()
+			.zip(min_squares.slopes.into_iter())
+			.map(|(a, b): (u128, u128)| { a.max(b) })
+			.collect::<Vec<u128>>();
+		// components should always be in the same order
+		median_slopes.names.iter()
+			.zip(min_squares.names.iter())
+			.for_each(|(a, b)| assert!(a == b, "benchmark results not in the same order"));
+		let names = median_slopes.names;
+		let value_dists = min_squares.value_dists;
+		let model = min_squares.model;
+
+		Some(Self {
+			base,
+			slopes,
+			names,
+			value_dists,
+			model,
 		})
 	}
 }
@@ -301,6 +374,7 @@ mod tests {
 			repeat_reads: 0,
 			writes,
 			repeat_writes: 0,
+			proof_size: 0,
 		}
 	}
 

@@ -119,9 +119,10 @@ impl ExecutionContext {
 		match self {
 			Importing | Syncing | BlockConstruction =>
 				offchain::Capabilities::none(),
-			// Enable keystore and transaction pool by default for offchain calls.
+			// Enable keystore, transaction pool and Offchain DB reads by default for offchain calls.
 			OffchainCall(None) => [
 				offchain::Capability::Keystore,
+				offchain::Capability::OffchainDbRead,
 				offchain::Capability::TransactionPool,
 			][..].into(),
 			OffchainCall(Some((_, capabilities))) => *capabilities,
@@ -145,6 +146,12 @@ impl From<OpaqueMetadata> for Bytes {
 impl Deref for Bytes {
 	type Target = [u8];
 	fn deref(&self) -> &[u8] { &self.0[..] }
+}
+
+impl codec::WrapperTypeEncode for Bytes {}
+
+impl codec::WrapperTypeDecode for Bytes {
+	type Wrapped = Vec<u8>;
 }
 
 #[cfg(feature = "std")]

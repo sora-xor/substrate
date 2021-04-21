@@ -21,11 +21,17 @@ mod writer;
 use sc_cli::{ExecutionStrategy, WasmExecutionMethod};
 use std::fmt::Debug;
 
+// Add a more relaxed parsing for pallet names by allowing pallet directory names with `-` to be used
+// like crate names with `_`
+fn parse_pallet_name(pallet: &str) -> String {
+	pallet.replace("-", "_")
+}
+
 /// The `benchmark` command used to benchmark FRAME Pallets.
 #[derive(Debug, structopt::StructOpt)]
 pub struct BenchmarkCmd {
 	/// Select a FRAME Pallet to benchmark, or `*` for all (in which case `extrinsic` must be `*`).
-	#[structopt(short, long)]
+	#[structopt(short, long, parse(from_str = parse_pallet_name))]
 	pub pallet: String,
 
 	/// Select an extrinsic inside the pallet to benchmark, or `*` for all.
@@ -72,6 +78,13 @@ pub struct BenchmarkCmd {
 	#[structopt(long)]
 	pub template: Option<std::path::PathBuf>,
 
+	/// Which analysis function to use when outputting benchmarks:
+	/// * min-squares (default)
+	/// * median-slopes
+	/// * max (max of min squares and median slopes for each value)
+	#[structopt(long)]
+	pub output_analysis: Option<String>,
+
 	/// Set the heap pages while running benchmarks.
 	#[structopt(long)]
 	pub heap_pages: Option<u64>,
@@ -83,6 +96,10 @@ pub struct BenchmarkCmd {
 	/// Display and run extra benchmarks that would otherwise not be needed for weight construction.
 	#[structopt(long)]
 	pub extra: bool,
+
+	/// Estimate PoV size.
+	#[structopt(long)]
+	pub record_proof: bool,
 
 	#[allow(missing_docs)]
 	#[structopt(flatten)]
