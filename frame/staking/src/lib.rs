@@ -1180,14 +1180,6 @@ decl_module! {
 
 		fn deposit_event() = default;
 
-		fn on_runtime_upgrade() -> Weight {
-			if StorageVersion::get() == Releases::V5_0_0 {
-				migrations::v6::migrate::<T>()
-			} else {
-				T::DbWeight::get().reads(1)
-			}
-		}
-
 		fn on_initialize(_now: T::BlockNumber) -> Weight {
 			// just return the weight of the on_finalize.
 			T::DbWeight::get().reads(1)

@@ -545,3 +545,18 @@ fn extrinsics_root_is_calculated_correctly() {
 		assert_eq!(ext_root, *header.extrinsics_root());
 	});
 }
+
+#[test]
+fn clean_migration_storages_test() {
+	new_test_ext().execute_with(|| {
+		use frame_support::pallet_prelude::PalletInfoAccess;
+		migrations::clean_migration_storages(System::name().as_bytes());
+		storage::migration::put_storage_value(b"System", b"UpgradedToU32RefCount", b"", true);
+		storage::migration::put_storage_value(b"System", b"UpgradedToDualRefCount", b"", true);
+		storage::migration::put_storage_value(b"System", b"UpgradedToTripleRefCount", b"", true);
+		migrations::clean_migration_storages(System::name().as_bytes());
+		assert_eq!(storage::migration::get_storage_value(b"System", b"UpgradedToU32RefCount", b""), None);
+		assert_eq!(storage::migration::get_storage_value(b"System", b"UpgradedToDualRefCount", b""), None);
+		assert_eq!(storage::migration::get_storage_value(b"System", b"UpgradedToTripleRefCount", b""), None);
+	});
+}

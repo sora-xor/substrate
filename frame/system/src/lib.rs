@@ -278,15 +278,6 @@ pub mod pallet {
 
 	#[pallet::hooks]
 	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
-		fn on_runtime_upgrade() -> frame_support::weights::Weight {
-			if !UpgradedToTripleRefCount::<T>::get() {
-				UpgradedToTripleRefCount::<T>::put(true);
-				migrations::migrate_to_triple_ref_count::<T>()
-			} else {
-				0
-			}
-		}
-
 		fn integrity_test() {
 			T::BlockWeights::get()
 				.validate()
@@ -607,10 +598,6 @@ pub mod pallet {
 	#[pallet::storage]
 	pub type LastRuntimeUpgrade<T: Config> = StorageValue<_, LastRuntimeUpgradeInfo>;
 
-	/// True if we have upgraded so that `type RefCount` is `u32`. False (default) if not.
-	#[pallet::storage]
-	pub(super) type UpgradedToU32RefCount<T: Config> = StorageValue<_, bool, ValueQuery>;
-
 	/// True if we have upgraded so that AccountInfo contains three types of `RefCount`. False
 	/// (default) if not.
 	#[pallet::storage]
@@ -643,8 +630,6 @@ pub mod pallet {
 			<BlockHash<T>>::insert::<_, T::Hash>(T::BlockNumber::zero(), hash69());
 			<ParentHash<T>>::put::<T::Hash>(hash69());
 			<LastRuntimeUpgrade<T>>::put(LastRuntimeUpgradeInfo::from(T::Version::get()));
-			<UpgradedToU32RefCount<T>>::put(true);
-			<UpgradedToTripleRefCount<T>>::put(true);
 
 			sp_io::storage::set(well_known_keys::CODE, &self.code);
 			sp_io::storage::set(well_known_keys::EXTRINSIC_INDEX, &0u32.encode());
@@ -655,10 +640,9 @@ pub mod pallet {
 	}
 }
 
-mod migrations {
+pub mod migrations {
 	use super::*;
 
-	#[allow(dead_code)]
 	/// Migrate from unique `u8` reference counting to triple `u32` reference counting.
 	pub fn migrate_all<T: Config>() -> frame_support::weights::Weight {
 		Account::<T>::translate::<(T::Index, u8, T::AccountData), _>(|_key, (nonce, rc, data)|
@@ -667,7 +651,6 @@ mod migrations {
 		T::BlockWeights::get().max_block
 	}
 
-	#[allow(dead_code)]
 	/// Migrate from unique `u32` reference counting to triple `u32` reference counting.
 	pub fn migrate_to_dual_ref_count<T: Config>() -> frame_support::weights::Weight {
 		Account::<T>::translate::<(T::Index, RefCount, T::AccountData), _>(|_key, (nonce, consumers, data)|
@@ -684,6 +667,20 @@ mod migrations {
 			}
 		);
 		T::BlockWeights::get().max_block
+	}
+
+	/// Remove the storages:
+	/// * `UpgradedToU32RefCount`,
+	/// * `UpgradedToDualRefCount`,
+	/// * `UpgradedToTripleRefCount`.
+	///
+	/// If a storage is empty, then it is ignored.
+	///
+	/// `pallet_name` is the name of system pallet as given to construct_runtime.
+	pub fn clean_migration_storages(pallet_name: &[u8]) {
+		storage::migration::remove_storage_prefix(pallet_name, b"UpgradedToU32RefCount", b"");
+		storage::migration::remove_storage_prefix(pallet_name, b"UpgradedToDualRefCount", b"");
+		storage::migration::remove_storage_prefix(pallet_name, b"UpgradedToTripleRefCount", b"");
 	}
 }
 
