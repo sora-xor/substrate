@@ -20,7 +20,7 @@
 use codec::FullCodec;
 use sp_runtime::traits::StoredMapError;
 use crate::storage::StorageMap;
-use crate::traits::misc::HandleLifetime;
+use crate::traits::{misc::HandleLifetime, MaxEncodedLen};
 
 /// An abstraction of a value stored within storage, but possibly as part of a larger composite
 /// item.
@@ -83,8 +83,8 @@ pub struct StorageMapShim<S, L, K, T>(sp_std::marker::PhantomData<(S, L, K, T)>)
 impl<
 	S: StorageMap<K, T, Query=T>,
 	L: HandleLifetime<K>,
-	K: FullCodec,
-	T: FullCodec + Default,
+	K: FullCodec + MaxEncodedLen,
+	T: FullCodec + MaxEncodedLen + Default,
 > StoredMap<K, T> for StorageMapShim<S, L, K, T> {
 	fn get(k: &K) -> T { S::get(k) }
 	fn insert(k: &K, t: T) -> Result<(), StoredMapError> {

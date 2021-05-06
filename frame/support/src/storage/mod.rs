@@ -22,7 +22,7 @@ use sp_std::prelude::*;
 use codec::{FullCodec, FullEncode, Encode, EncodeLike, Decode};
 use crate::{
 	hash::{Twox128, StorageHasher, ReversibleStorageHasher},
-	traits::Get,
+	traits::{Get, MaxEncodedLen},
 };
 use sp_runtime::generic::{Digest, DigestItem};
 pub use sp_runtime::TransactionOutcome;
@@ -113,7 +113,7 @@ pub fn with_transaction<R>(f: impl FnOnce() -> TransactionOutcome<R>) -> R {
 /// A trait for working with macro-generated storage values under the substrate storage API.
 ///
 /// Details on implementation can be found at [`generator::StorageValue`].
-pub trait StorageValue<T: FullCodec> {
+pub trait StorageValue<T: FullCodec + MaxEncodedLen> {
 	/// The type that get/take return.
 	type Query;
 
@@ -206,7 +206,7 @@ pub trait StorageValue<T: FullCodec> {
 /// A strongly-typed map in storage.
 ///
 /// Details on implementation can be found at [`generator::StorageMap`].
-pub trait StorageMap<K: FullEncode, V: FullCodec> {
+pub trait StorageMap<K: FullEncode + MaxEncodedLen, V: FullCodec + MaxEncodedLen> {
 	/// The type that get/take return.
 	type Query;
 
@@ -304,7 +304,7 @@ pub trait StorageMap<K: FullEncode, V: FullCodec> {
 }
 
 /// A strongly-typed map in storage whose keys and values can be iterated over.
-pub trait IterableStorageMap<K: FullEncode, V: FullCodec>: StorageMap<K, V> {
+pub trait IterableStorageMap<K: FullEncode + MaxEncodedLen, V: FullCodec + MaxEncodedLen>: StorageMap<K, V> {
 	/// The type that iterates over all `(key, value)`.
 	type Iterator: Iterator<Item = (K, V)>;
 
@@ -325,9 +325,9 @@ pub trait IterableStorageMap<K: FullEncode, V: FullCodec>: StorageMap<K, V> {
 
 /// A strongly-typed double map in storage whose secondary keys and values can be iterated over.
 pub trait IterableStorageDoubleMap<
-	K1: FullCodec,
-	K2: FullCodec,
-	V: FullCodec
+	K1: FullCodec + MaxEncodedLen,
+	K2: FullCodec + MaxEncodedLen,
+	V: FullCodec + MaxEncodedLen
 >: StorageDoubleMap<K1, K2, V> {
 	/// The type that iterates over all `(key2, value)`.
 	type PrefixIterator: Iterator<Item = (K2, V)>;
@@ -366,7 +366,7 @@ pub trait IterableStorageDoubleMap<
 /// that have a common first key.
 ///
 /// Details on implementation can be found at [`generator::StorageDoubleMap`].
-pub trait StorageDoubleMap<K1: FullEncode, K2: FullEncode, V: FullCodec> {
+pub trait StorageDoubleMap<K1: FullEncode + MaxEncodedLen, K2: FullEncode + MaxEncodedLen, V: FullCodec + MaxEncodedLen> {
 	/// The type that get/take returns.
 	type Query;
 
@@ -709,7 +709,7 @@ impl<T> Iterator for ChildTriePrefixIterator<T> {
 /// ```nocompile
 /// Twox128(module_prefix) ++ Twox128(storage_prefix)
 /// ```
-pub trait StoragePrefixedMap<Value: FullCodec> {
+pub trait StoragePrefixedMap<Value: FullCodec + MaxEncodedLen> {
 	/// Module prefix. Used for generating final key.
 	fn module_prefix() -> &'static [u8];
 

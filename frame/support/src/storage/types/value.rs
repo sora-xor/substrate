@@ -24,7 +24,7 @@ use crate::{
 		bounded_vec::{BoundedVec, BoundedVecValue},
 		types::{OptionQuery, QueryKindTrait, OnEmptyGetter},
 	},
-	traits::{GetDefault, StorageInstance, Get},
+	traits::{GetDefault, StorageInstance, Get, MaxEncodedLen},
 };
 use frame_metadata::{DefaultByteGetter, StorageEntryModifier};
 
@@ -42,7 +42,7 @@ impl<Prefix, Value, QueryKind, OnEmpty> crate::storage::generator::StorageValue<
 	StorageValue<Prefix, Value, QueryKind, OnEmpty>
 where
 	Prefix: StorageInstance,
-	Value: FullCodec,
+	Value: FullCodec +MaxEncodedLen,
 	QueryKind: QueryKindTrait<Value, OnEmpty>,
 	OnEmpty: crate::traits::Get<QueryKind::Query> + 'static,
 {
@@ -84,7 +84,7 @@ where
 impl<Prefix, Value, QueryKind, OnEmpty> StorageValue<Prefix, Value, QueryKind, OnEmpty>
 where
 	Prefix: StorageInstance,
-	Value: FullCodec,
+	Value: FullCodec +MaxEncodedLen,
 	QueryKind: QueryKindTrait<Value, OnEmpty>,
 	OnEmpty: crate::traits::Get<QueryKind::Query> + 'static,
 {
@@ -202,7 +202,7 @@ pub trait StorageValueMetadata {
 impl<Prefix, Value, QueryKind, OnEmpty> StorageValueMetadata
 	for StorageValue<Prefix, Value, QueryKind, OnEmpty> where
 	Prefix: StorageInstance,
-	Value: FullCodec,
+	Value: FullCodec +MaxEncodedLen,
 	QueryKind: QueryKindTrait<Value, OnEmpty>,
 	OnEmpty: crate::traits::Get<QueryKind::Query> + 'static,
 {

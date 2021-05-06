@@ -20,6 +20,7 @@ use crate::{
 	Never,
 	storage::{self, unhashed, StorageAppend},
 	hash::{Twox128, StorageHasher},
+	traits::MaxEncodedLen,
 };
 
 /// Generator for `StorageValue` used by `decl_storage`.
@@ -28,7 +29,7 @@ use crate::{
 /// ```nocompile
 /// Twox128(module_prefix) ++ Twox128(storage_prefix)
 /// ```
-pub trait StorageValue<T: FullCodec> {
+pub trait StorageValue<T: FullCodec + MaxEncodedLen> {
 	/// The type that get/take returns.
 	type Query;
 
@@ -53,7 +54,7 @@ pub trait StorageValue<T: FullCodec> {
 	}
 }
 
-impl<T: FullCodec, G: StorageValue<T>> storage::StorageValue<T> for G {
+impl<T: FullCodec + MaxEncodedLen, G: StorageValue<T>> storage::StorageValue<T> for G {
 	type Query = G::Query;
 
 	fn hashed_key() -> [u8; 32] {

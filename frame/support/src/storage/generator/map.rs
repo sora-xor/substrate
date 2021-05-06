@@ -22,6 +22,7 @@ use codec::{FullCodec, FullEncode, Decode, Encode, EncodeLike};
 use crate::{
 	storage::{self, unhashed, StorageAppend, PrefixIterator},
 	Never, hash::{StorageHasher, Twox128, ReversibleStorageHasher},
+	traits::MaxEncodedLen,
 };
 
 /// Generator for `StorageMap` used by `decl_storage`.
@@ -35,7 +36,7 @@ use crate::{
 ///
 /// If the keys are not trusted (e.g. can be set by a user), a cryptographic `hasher` such as
 /// `blake2_256` must be used.  Otherwise, other values in storage can be compromised.
-pub trait StorageMap<K: FullEncode, V: FullCodec> {
+pub trait StorageMap<K: FullEncode + MaxEncodedLen, V: FullCodec + MaxEncodedLen> {
 	/// The type that get/take returns.
 	type Query;
 
@@ -133,8 +134,8 @@ impl<
 }
 
 impl<
-	K: FullCodec,
-	V: FullCodec,
+	K: FullCodec + MaxEncodedLen,
+	V: FullCodec + MaxEncodedLen,
 	G: StorageMap<K, V>,
 > storage::IterableStorageMap<K, V> for G where
 	G::Hasher: ReversibleStorageHasher
@@ -194,7 +195,7 @@ impl<
 	}
 }
 
-impl<K: FullEncode, V: FullCodec, G: StorageMap<K, V>> storage::StorageMap<K, V> for G {
+impl<K: FullEncode + MaxEncodedLen, V: FullCodec + MaxEncodedLen, G: StorageMap<K, V>> storage::StorageMap<K, V> for G {
 	type Query = G::Query;
 
 	fn hashed_key_for<KeyArg: EncodeLike<K>>(key: KeyArg) -> Vec<u8> {

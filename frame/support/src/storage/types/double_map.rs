@@ -25,7 +25,7 @@ use crate::{
 		bounded_vec::{BoundedVec, BoundedVecValue},
 		types::{OptionQuery, QueryKindTrait, OnEmptyGetter},
 	},
-	traits::{GetDefault, StorageInstance, Get},
+	traits::{GetDefault, StorageInstance, Get, MaxEncodedLen},
 };
 use frame_metadata::{DefaultByteGetter, StorageEntryModifier};
 use sp_std::vec::Vec;
@@ -59,9 +59,9 @@ where
 	Prefix: StorageInstance,
 	Hasher1: crate::hash::StorageHasher,
 	Hasher2: crate::hash::StorageHasher,
-	Key1: FullCodec,
-	Key2: FullCodec,
-	Value: FullCodec,
+	Key1: FullCodec + MaxEncodedLen,
+	Key2: FullCodec + MaxEncodedLen,
+	Value: FullCodec + MaxEncodedLen,
 	QueryKind: QueryKindTrait<Value, OnEmpty>,
 	OnEmpty: crate::traits::Get<QueryKind::Query> + 'static
 {
@@ -89,9 +89,9 @@ where
 	Prefix: StorageInstance,
 	Hasher1: crate::hash::StorageHasher,
 	Hasher2: crate::hash::StorageHasher,
-	Key1: FullCodec,
-	Key2: FullCodec,
-	Value: FullCodec,
+	Key1: FullCodec + MaxEncodedLen,
+	Key2: FullCodec + MaxEncodedLen,
+	Value: FullCodec + MaxEncodedLen,
 	QueryKind: QueryKindTrait<Value, OnEmpty>,
 	OnEmpty: crate::traits::Get<QueryKind::Query> + 'static
 {
@@ -117,8 +117,8 @@ impl<Prefix, Hasher1, Key1, Hasher2, Key2, QueryKind, OnEmpty, VecValue, VecBoun
 	Prefix: StorageInstance,
 	Hasher1: crate::hash::StorageHasher,
 	Hasher2: crate::hash::StorageHasher,
-	Key1: FullCodec,
-	Key2: FullCodec,
+	Key1: FullCodec + MaxEncodedLen,
+	Key2: FullCodec + MaxEncodedLen,
 	QueryKind: QueryKindTrait<BoundedVec<VecValue, VecBound>, OnEmpty>,
 	OnEmpty: crate::traits::Get<QueryKind::Query> + 'static,
 	VecValue: BoundedVecValue,
@@ -153,9 +153,9 @@ where
 	Prefix: StorageInstance,
 	Hasher1: crate::hash::StorageHasher,
 	Hasher2: crate::hash::StorageHasher,
-	Key1: FullCodec,
-	Key2: FullCodec,
-	Value: FullCodec,
+	Key1: FullCodec + MaxEncodedLen,
+	Key2: FullCodec + MaxEncodedLen,
+	Value: FullCodec + MaxEncodedLen,
 	QueryKind: QueryKindTrait<Value, OnEmpty>,
 	OnEmpty: crate::traits::Get<QueryKind::Query> + 'static
 {
@@ -382,9 +382,9 @@ where
 	Prefix: StorageInstance,
 	Hasher1: crate::hash::StorageHasher + crate::ReversibleStorageHasher,
 	Hasher2: crate::hash::StorageHasher + crate::ReversibleStorageHasher,
-	Key1: FullCodec,
-	Key2: FullCodec,
-	Value: FullCodec,
+	Key1: FullCodec + MaxEncodedLen,
+	Key2: FullCodec + MaxEncodedLen,
+	Value: FullCodec + MaxEncodedLen,
 	QueryKind: QueryKindTrait<Value, OnEmpty>,
 	OnEmpty: crate::traits::Get<QueryKind::Query> + 'static
 {
@@ -445,9 +445,9 @@ impl<Prefix, Hasher1, Hasher2, Key1, Key2, Value, QueryKind, OnEmpty> StorageDou
 	Prefix: StorageInstance,
 	Hasher1: crate::hash::StorageHasher,
 	Hasher2: crate::hash::StorageHasher,
-	Key1: FullCodec,
-	Key2: FullCodec,
-	Value: FullCodec,
+	Key1: FullCodec + MaxEncodedLen,
+	Key2: FullCodec + MaxEncodedLen,
+	Value: FullCodec + MaxEncodedLen,
 	QueryKind: QueryKindTrait<Value, OnEmpty>,
 	OnEmpty: crate::traits::Get<QueryKind::Query> + 'static
 {

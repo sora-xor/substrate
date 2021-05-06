@@ -25,7 +25,7 @@ use crate::{
 		bounded_vec::{BoundedVec, BoundedVecValue},
 		types::{OptionQuery, QueryKindTrait, OnEmptyGetter},
 	},
-	traits::{GetDefault, StorageInstance, Get},
+	traits::{GetDefault, StorageInstance, Get, MaxEncodedLen},
 };
 use frame_metadata::{DefaultByteGetter, StorageEntryModifier};
 use sp_std::prelude::*;
@@ -53,8 +53,8 @@ impl<Prefix, Hasher, Key, Value, QueryKind, OnEmpty>
 where
 	Prefix: StorageInstance,
 	Hasher: crate::hash::StorageHasher,
-	Key: FullCodec,
-	Value: FullCodec,
+	Key: FullCodec + MaxEncodedLen,
+	Value: FullCodec + MaxEncodedLen,
 	QueryKind: QueryKindTrait<Value, OnEmpty>,
 	OnEmpty: crate::traits::Get<QueryKind::Query> + 'static,
 {
@@ -79,8 +79,8 @@ impl<Prefix, Hasher, Key, Value, QueryKind, OnEmpty> crate::storage::StoragePref
 where
 	Prefix: StorageInstance,
 	Hasher: crate::hash::StorageHasher,
-	Key: FullCodec,
-	Value: FullCodec,
+	Key: FullCodec + MaxEncodedLen,
+	Value: FullCodec + MaxEncodedLen,
 	QueryKind: QueryKindTrait<Value, OnEmpty>,
 	OnEmpty: crate::traits::Get<QueryKind::Query> + 'static,
 {
@@ -97,7 +97,7 @@ impl<Prefix, Hasher, Key, QueryKind, OnEmpty, VecValue, VecBound>
 where
 	Prefix: StorageInstance,
 	Hasher: crate::hash::StorageHasher,
-	Key: FullCodec,
+	Key: FullCodec + MaxEncodedLen,
 	QueryKind: QueryKindTrait<BoundedVec<VecValue, VecBound>, OnEmpty>,
 	OnEmpty: crate::traits::Get<QueryKind::Query> + 'static,
 	VecValue: BoundedVecValue,
@@ -125,8 +125,8 @@ impl<Prefix, Hasher, Key, Value, QueryKind, OnEmpty>
 where
 	Prefix: StorageInstance,
 	Hasher: crate::hash::StorageHasher,
-	Key: FullCodec,
-	Value: FullCodec,
+	Key: FullCodec + MaxEncodedLen,
+	Value: FullCodec + MaxEncodedLen,
 	QueryKind: QueryKindTrait<Value, OnEmpty>,
 	OnEmpty: crate::traits::Get<QueryKind::Query> + 'static,
 {
@@ -288,8 +288,8 @@ impl<Prefix, Hasher, Key, Value, QueryKind, OnEmpty>
 where
 	Prefix: StorageInstance,
 	Hasher: crate::hash::StorageHasher + crate::ReversibleStorageHasher,
-	Key: FullCodec,
-	Value: FullCodec,
+	Key: FullCodec + MaxEncodedLen,
+	Value: FullCodec + MaxEncodedLen,
 	QueryKind: QueryKindTrait<Value, OnEmpty>,
 	OnEmpty: crate::traits::Get<QueryKind::Query> + 'static,
 {
@@ -331,8 +331,8 @@ impl<Prefix, Hasher, Key, Value, QueryKind, OnEmpty> StorageMapMetadata
 	for StorageMap<Prefix, Hasher, Key, Value, QueryKind, OnEmpty> where
 	Prefix: StorageInstance,
 	Hasher: crate::hash::StorageHasher,
-	Key: FullCodec,
-	Value: FullCodec,
+	Key: FullCodec + MaxEncodedLen,
+	Value: FullCodec + MaxEncodedLen,
 	QueryKind: QueryKindTrait<Value, OnEmpty>,
 	OnEmpty: crate::traits::Get<QueryKind::Query> + 'static,
 {

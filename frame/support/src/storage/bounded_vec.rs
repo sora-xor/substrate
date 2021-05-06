@@ -28,8 +28,8 @@ use crate::{
 };
 
 /// Marker trait for types `T` that can be stored in storage as `BoundedVec<T, _>`.
-pub trait BoundedVecValue: FullCodec + Clone + sp_std::fmt::Debug {}
-impl<T: FullCodec + Clone + sp_std::fmt::Debug> BoundedVecValue for T {}
+pub trait BoundedVecValue: FullCodec + MaxEncodedLen + Clone + sp_std::fmt::Debug {}
+impl<T: FullCodec + MaxEncodedLen + Clone + sp_std::fmt::Debug> BoundedVecValue for T {}
 
 /// A bounded vector.
 ///
@@ -296,7 +296,7 @@ impl<T: BoundedVecValue, S: Get<u32>, StorageValueT: generator::StorageValue<Bou
 }
 
 impl<
-		K: FullCodec,
+		K: FullCodec + MaxEncodedLen,
 		T: BoundedVecValue,
 		S: Get<u32>,
 		StorageMapT: generator::StorageMap<K, BoundedVec<T, S>>,
@@ -319,8 +319,8 @@ impl<
 }
 
 impl<
-		K1: FullCodec,
-		K2: FullCodec,
+		K1: FullCodec + MaxEncodedLen,
+		K2: FullCodec + MaxEncodedLen,
 		T: BoundedVecValue,
 		S: Get<u32>,
 		StorageDoubleMapT: generator::StorageDoubleMap<K1, K2, BoundedVec<T, S>>,

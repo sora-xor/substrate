@@ -18,7 +18,7 @@
 use sp_std::prelude::*;
 use sp_std::borrow::Borrow;
 use codec::{FullCodec, FullEncode, Decode, Encode, EncodeLike};
-use crate::{storage::{self, unhashed, StorageAppend, PrefixIterator}, Never};
+use crate::{storage::{self, unhashed, StorageAppend, PrefixIterator}, Never, traits::MaxEncodedLen};
 use crate::hash::{StorageHasher, Twox128, ReversibleStorageHasher};
 
 /// Generator for `StorageDoubleMap` used by `decl_storage`.
@@ -41,7 +41,7 @@ use crate::hash::{StorageHasher, Twox128, ReversibleStorageHasher};
 /// If the key2s are not trusted (e.g. can be set by a user), a cryptographic `hasher` such as
 /// `blake2_256` must be used for Hasher2. Otherwise, other items in storage with the same first
 /// key can be compromised.
-pub trait StorageDoubleMap<K1: FullEncode, K2: FullEncode, V: FullCodec> {
+pub trait StorageDoubleMap<K1: FullEncode + MaxEncodedLen, K2: FullEncode + MaxEncodedLen, V: FullCodec + MaxEncodedLen> {
 	/// The type that get/take returns.
 	type Query;
 
@@ -125,9 +125,9 @@ pub trait StorageDoubleMap<K1: FullEncode, K2: FullEncode, V: FullCodec> {
 }
 
 impl<K1, K2, V, G> storage::StorageDoubleMap<K1, K2, V> for G where
-	K1: FullEncode,
-	K2: FullEncode,
-	V: FullCodec,
+	K1: FullEncode + MaxEncodedLen,
+	K2: FullEncode + MaxEncodedLen,
+	V: FullCodec + MaxEncodedLen,
 	G: StorageDoubleMap<K1, K2, V>,
 {
 	type Query = G::Query;
@@ -331,9 +331,9 @@ impl<K1, K2, V, G> storage::StorageDoubleMap<K1, K2, V> for G where
 }
 
 impl<
-	K1: FullCodec,
-	K2: FullCodec,
-	V: FullCodec,
+	K1: FullCodec + MaxEncodedLen,
+	K2: FullCodec + MaxEncodedLen,
+	V: FullCodec + MaxEncodedLen,
 	G: StorageDoubleMap<K1, K2, V>,
 > storage::IterableStorageDoubleMap<K1, K2, V> for G where
 	G::Hasher1: ReversibleStorageHasher,
