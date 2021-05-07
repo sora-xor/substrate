@@ -23,7 +23,7 @@ use sp_std::{convert::TryFrom, marker::PhantomData};
 use codec::{FullCodec, Encode, EncodeLike, Decode};
 use core::{ops::{Index, IndexMut}, slice::SliceIndex};
 use crate::{
-	traits::Get,
+	traits::{Get, MaxEncodedLen},
 	storage::{generator, StorageDecodeLength, StorageValue, StorageMap, StorageDoubleMap},
 };
 
@@ -58,22 +58,14 @@ impl<T: BoundedVecValue, S: Get<u32>> BoundedVec<T, S> {
 	}
 
 	/// Create `Self` from `t` without any checks.
-	///
-	/// # WARNING
-	///
-	/// Only use when you are sure you know what you are doing.
-	fn unchecked_from(t: Vec<T>) -> Self {
+	unsafe fn unchecked_from(t: Vec<T>) -> Self {
 		Self(t, Default::default())
 	}
 
 	/// Create `Self` from `t` without any checks. Logs warnings if the bound is not being
 	/// respected. The additional scope can be used to indicate where a potential overflow is
 	/// happening.
-	///
-	/// # WARNING
-	///
-	/// Only use when you are sure you know what you are doing.
-	pub fn force_from(t: Vec<T>, scope: Option<&'static str>) -> Self {
+	pub unsafe fn force_from(t: Vec<T>, scope: Option<&'static str>) -> Self {
 		if t.len() > Self::bound() {
 			log::warn!(
 				target: crate::LOG_TARGET,
@@ -166,7 +158,8 @@ impl<T: BoundedVecValue, S: Get<u32>> TryFrom<Vec<T>> for BoundedVec<T, S> {
 	type Error = ();
 	fn try_from(t: Vec<T>) -> Result<Self, Self::Error> {
 		if t.len() <= Self::bound() {
-			Ok(Self::unchecked_from(t))
+			// explicit check just above
+			Ok(unsafe {Self::unchecked_from(t)})
 		} else {
 			Err(())
 		}
@@ -347,6 +340,21 @@ impl<
 	}
 }
 
+impl<T, S> MaxEncodedLen for BoundedVec<T, S>
+where
+	T: BoundedVecValue + MaxEncodedLen,
+	S: Get<u32>,
+	BoundedVec<T, S>: Encode,
+{
+	fn max_encoded_len() -> usize {
+		// BoundedVec<T, S> encodes like Vec<T> which encodes like [T], which is a compact u32
+		// plus each item in the slice:
+		// https://substrate.dev/rustdocs/v3.0.0/src/parity_scale_codec/codec.rs.html#798-808
+		codec::Compact(S::get()).encoded_size()
+			.saturating_add(Self::bound().saturating_mul(T::max_encoded_len()))
+	}
+}
+
 #[cfg(test)]
 pub mod test {
 	use super::*;
@@ -419,11 +427,11 @@ pub mod test {
 			// append to a non-existing
 			assert!(FooMap::get(2).is_none());
 			assert_ok!(FooMap::try_append(2, 4));
-			assert_eq!(FooMap::get(2).unwrap(), BoundedVec::<u32, Seven>::unchecked_from(vec![4]));
+			assert_eq!(FooMap::get(2).unwrap(), unsafe {BoundedVec::<u32, Seven>::unchecked_from(vec![4])});
 			assert_ok!(FooMap::try_append(2, 5));
 			assert_eq!(
 				FooMap::get(2).unwrap(),
-				BoundedVec::<u32, Seven>::unchecked_from(vec![4, 5])
+				unsafe {BoundedVec::<u32, Seven>::unchecked_from(vec![4, 5])}
 			);
 		});
 
@@ -443,12 +451,12 @@ pub mod test {
 			assert_ok!(FooDoubleMap::try_append(2, 1, 4));
 			assert_eq!(
 				FooDoubleMap::get(2, 1).unwrap(),
-				BoundedVec::<u32, Seven>::unchecked_from(vec![4])
+				unsafe {BoundedVec::<u32, Seven>::unchecked_from(vec![4])}
 			);
 			assert_ok!(FooDoubleMap::try_append(2, 1, 5));
 			assert_eq!(
 				FooDoubleMap::get(2, 1).unwrap(),
-				BoundedVec::<u32, Seven>::unchecked_from(vec![4, 5])
+				unsafe {BoundedVec::<u32, Seven>::unchecked_from(vec![4, 5])}
 			);
 		});
 	}
