@@ -306,20 +306,24 @@ pub mod pallet {
 		DuplicatedHeartbeat,
 	}
 
-	/// The block number after which it's ok to send heartbeats in the current
-	/// session.
+	/// The block number after which it's ok to send heartbeats in the current session.
 	///
-	/// At the beginning of each session we set this to a value that should fall
-	/// roughly in the middle of the session duration. The idea is to first wait for
-	/// the validators to produce a block in the current session, so that the
-	/// heartbeat later on will not be necessary.
+	/// At the beginning of each session we set this to a value that should fall roughly in the
+	/// middle of the session duration. The idea is to first wait for the validators to produce a
+	/// block in the current session, so that the heartbeat later on will not be necessary.
 	///
-	/// This value will only be used as a fallback if we fail to get a proper session
-	/// progress estimate from `NextSessionRotation`, as those estimates should be
-	/// more accurate then the value we calculate for `HeartbeatAfter`.
+	/// This value will only be used as a fallback if we fail to get a proper session progress
+	/// estimate from `NextSessionRotation`, as those estimates should be more accurate then the
+	/// value we calculate for `HeartbeatAfter`.
 	#[pallet::storage]
 	#[pallet::getter(fn heartbeat_after)]
 	pub(crate) type HeartbeatAfter<T: Config> = StorageValue<_, T::BlockNumber, ValueQuery>;
+
+	/// The block number at which we send the heartbeat. This is determined based of
+	/// [`HeartbeatAfter`] or a progressive `NextSessionRotation`.
+	#[pallet::storage]
+	#[pallet::getter(fn heartbeat_due)]
+	pub(crate) type HeartbeatDue<T: Config> = StorageValue<_, T::BlockNumber, ValueQuery>;
 
 	/// The current set of keys that may issue a heartbeat.
 	#[pallet::storage]
@@ -431,6 +435,19 @@ pub mod pallet {
 		fn offchain_worker(now: BlockNumberFor<T>) {
 			// Only send messages if we are a potential validator.
 			if sp_io::offchain::is_validator() {
+				match Self::heartbeat_due() {
+					Some(at) if at == now {
+						// we've already decided when to send the heartbeat.
+					}
+					None => {
+						// we haven't decided yet when to send a heartbeat. Try and schedule one.
+
+					},
+					_ => {
+						// we have scheduled something but it is not time yet -- nothing to do.
+					}
+				}
+
 				for res in Self::send_heartbeats(now).into_iter().flatten() {
 					if let Err(e) = res {
 						log::debug!(
@@ -568,9 +585,9 @@ impl<T: Config> Pallet<T> {
 		);
 	}
 
-	pub(crate) fn send_heartbeats(
-		block_number: T::BlockNumber,
-	) -> OffchainResult<T, impl Iterator<Item = OffchainResult<T, ()>>> {
+	/// Try and schedule a heartbeat to be sent. Uses `NextSessionRotation`, or `HeartbeatAfter` as
+	/// fallback to decide when we have reached half of a session.
+	pub(crate) fn maybe_schedule_heartbeat(block_number: T::BlockNumber) -> OffchainResult<T, T::BlockNumber> {
 		const HALF_SESSION: Percent = Percent::from_percent(50);
 
 		let too_early = if let (Some(progress), _) =
@@ -591,20 +608,27 @@ impl<T: Config> Pallet<T> {
 			return Err(OffchainErr::TooEarly);
 		}
 
+		Ok(block_number + 1)
+	}
+
+	/// Send the heartbeat, no turning back now.
+	///
+	/// Should only be called when `block_number` is equal to `HeartbeatDue::get()`.
+	pub(crate) fn do_send_heartbeat(block_number: T::BlockNumber) -> impl Iterator<Item = OffchainResult<T, T::BlockNumber>> {
+		debug_assert!(block_number, Self::heartbeat_due().unwrap_or_default());
+
 		let session_index = T::ValidatorSet::session_index();
 		let validators_len = Keys::<T>::decode_len().unwrap_or_default() as u32;
 
-		Ok(
-			Self::local_authority_keys().map(move |(authority_index, key)| {
-				Self::send_single_heartbeat(
-					authority_index,
-					key,
-					session_index,
-					block_number,
-					validators_len,
-				)
-			}),
-		)
+		Self::local_authority_keys().map(move |(authority_index, key)|
+			Self::send_single_heartbeat(
+				authority_index,
+				key,
+				session_index,
+				block_number,
+				validators_len,
+			)
+		),
 	}
 
 
