@@ -235,7 +235,7 @@ pub mod pallet {
 		)]
 		pub fn vest(origin: OriginFor<T>) -> DispatchResult {
 			let who = ensure_signed(origin)?;
-			Self::update_lock(who)
+			Self::update_lock_and_prune_schedules(who)
 		}
 
 		/// Unlock any vested funds of a `target` account.
@@ -258,7 +258,7 @@ pub mod pallet {
 		)]
 		pub fn vest_other(origin: OriginFor<T>, target: <T::Lookup as StaticLookup>::Source) -> DispatchResult {
 			ensure_signed(origin)?;
-			Self::update_lock(T::Lookup::lookup(target)?)
+			Self::update_lock_and_prune_schedules(T::Lookup::lookup(target)?)
 		}
 
 		/// Create a vested transfer.
@@ -342,8 +342,8 @@ pub mod pallet {
 
 impl<T: Config> Pallet<T> {
 	/// (Re)set or remove the pallet's currency lock on `who`'s account in accordance with their
-	/// current unvested amount.
-	fn update_lock(who: T::AccountId) -> DispatchResult {
+	/// current unvested amount and prune any vesting schedules that have completed.
+	fn update_lock_and_prune_schedules(who: T::AccountId) -> DispatchResult {
 		let vesting = Self::vesting(&who).ok_or(Error::<T>::NotVesting)?;
 		let now = <frame_system::Pallet<T>>::block_number();
 
@@ -421,7 +421,7 @@ impl<T: Config> VestingSchedule<T::AccountId> for Pallet<T> where
 		};
 		Vesting::<T>::try_append(who, vesting_schedule).expect("Vec bounds checked prior to write.");
 		// it can't fail, but even if somehow it did, we don't really care.
-		let res = Self::update_lock(who.clone());
+		let res = Self::update_lock_and_prune_schedules(who.clone());
 		debug_assert!(res.is_ok());
 		Ok(())
 	}
@@ -430,7 +430,7 @@ impl<T: Config> VestingSchedule<T::AccountId> for Pallet<T> where
 	fn remove_vesting_schedule(who: &T::AccountId) {
 		Vesting::<T>::remove(who);
 		// it can't fail, but even if somehow it did, we don't really care.
-		let res = Self::update_lock(who.clone());
+		let res = Self::update_lock_and_prune_schedules(who.clone());
 		debug_assert!(res.is_ok());
 	}
 }
