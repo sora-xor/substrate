@@ -283,19 +283,8 @@ pub mod pallet {
 			schedule: VestingInfo<BalanceOf<T>, T::BlockNumber>,
 		) -> DispatchResult {
 			let transactor = ensure_signed(origin)?;
-			ensure!(schedule.locked >= T::MinVestedTransfer::get(), Error::<T>::AmountLow);
-
-			let who = T::Lookup::lookup(target)?;
-			if let Some(len) = Vesting::<T>::decode_len(&who) {
-				ensure!(len < T::MaxVestingSchedules::get() as usize, Error::<T>::AtMaxVestingSchedules);
-			}
-
-			T::Currency::transfer(&transactor, &who, schedule.locked, ExistenceRequirement::AllowDeath)?;
-
-			Self::add_vesting_schedule(&who, schedule.locked, schedule.per_block, schedule.starting_block)
-				.expect("user does not have an existing vesting schedule; q.e.d.");
-
-			Ok(())
+			let transactor = <T::Lookup as StaticLookup>::unlookup(transactor);
+			Self::do_vested_transfer(transactor, target, schedule)
 		}
 
 		/// Force a vested transfer.
@@ -322,25 +311,34 @@ pub mod pallet {
 			schedule: VestingInfo<BalanceOf<T>, T::BlockNumber>,
 		) -> DispatchResult {
 			ensure_root(origin)?;
-			ensure!(schedule.locked >= T::MinVestedTransfer::get(), Error::<T>::AmountLow);
-
-			let target = T::Lookup::lookup(target)?;
-			let source = T::Lookup::lookup(source)?;
-			if let Some(len) = Vesting::<T>::decode_len(&target) {
-				ensure!(len < T::MaxVestingSchedules::get() as usize, Error::<T>::AtMaxVestingSchedules);
-			}
-
-			T::Currency::transfer(&source, &target, schedule.locked, ExistenceRequirement::AllowDeath)?;
-
-			Self::add_vesting_schedule(&target, schedule.locked, schedule.per_block, schedule.starting_block)
-				.expect("user does not have an existing vesting schedule; q.e.d.");
-
-			Ok(())
+			Self::do_vested_transfer(source, target, schedule)
 		}
 	}
 }
 
 impl<T: Config> Pallet<T> {
+	// Execute a vested transfer from `source` to `target` with the given `schedule`.
+	fn do_vested_transfer(
+		source: <T::Lookup as StaticLookup>::Source,
+		target: <T::Lookup as StaticLookup>::Source,
+		schedule: VestingInfo<BalanceOf<T>, T::BlockNumber>
+	) -> DispatchResult {
+		ensure!(schedule.locked >= T::MinVestedTransfer::get(), Error::<T>::AmountLow);
+
+		let target = T::Lookup::lookup(target)?;
+		let source = T::Lookup::lookup(source)?;
+		if let Some(len) = Vesting::<T>::decode_len(&target) {
+			ensure!(len < T::MaxVestingSchedules::get() as usize, Error::<T>::AtMaxVestingSchedules);
+		}
+
+		T::Currency::transfer(&source, &target, schedule.locked, ExistenceRequirement::AllowDeath)?;
+
+		Self::add_vesting_schedule(&target, schedule.locked, schedule.per_block, schedule.starting_block)
+			.expect("user has less than `MaxVestingSchedules` schedules; q.e.d.");
+
+		Ok(())
+	}
+
 	/// (Re)set or remove the pallet's currency lock on `who`'s account in accordance with their
 	/// current unvested amount and prune any vesting schedules that have completed.
 	fn update_lock_and_prune_schedules(who: T::AccountId) -> DispatchResult {
@@ -387,8 +385,10 @@ impl<T: Config> VestingSchedule<T::AccountId> for Pallet<T> where
 	fn vesting_balance(who: &T::AccountId) -> Option<BalanceOf<T>> {
 		if let Some(v) = Self::vesting(who) {
 			let now = <frame_system::Pallet<T>>::block_number();
-			let locked_now = v[0].locked_at::<T::BlockNumberToBalance>(now);
-			Some(T::Currency::free_balance(who).min(locked_now))
+			let total_locked_now = v.iter().fold(Zero::zero(), |total, schedule| {
+				schedule.locked_at::<T::BlockNumberToBalance>(now).saturating_add(total)
+			});
+			Some(T::Currency::free_balance(who).min(total_locked_now))
 		} else {
 			None
 		}
@@ -419,7 +419,7 @@ impl<T: Config> VestingSchedule<T::AccountId> for Pallet<T> where
 			per_block,
 			starting_block
 		};
-		Vesting::<T>::try_append(who, vesting_schedule).expect("Vec bounds checked prior to write.");
+		Vesting::<T>::try_append(who, vesting_schedule).expect("BoundedVec bounds checked prior to write.");
 		// it can't fail, but even if somehow it did, we don't really care.
 		let res = Self::update_lock_and_prune_schedules(who.clone());
 		debug_assert!(res.is_ok());
@@ -776,8 +776,7 @@ mod tests {
 					starting_block: 10,
 				};
 				assert_eq!(Vesting::vesting(&2).unwrap()[0], user2_vesting_schedule);
-
-				for i in 0..<Test as Config>::MaxVestingSchedules::get() - 1{
+				for _ in 0..<Test as Config>::MaxVestingSchedules::get() - 1{
 					assert_eq!(Vesting::vested_transfer(Some(4).into(), 2, user2_vesting_schedule), Ok(()));
 				}
 				// Try to insert a 4th vesting schedule when `MaxVestingSchedules` === 3
@@ -803,6 +802,7 @@ mod tests {
 			});
 	}
 
+	#[test]
 	fn force_vested_transfer_works() {
 		ExtBuilder::default()
 			.existential_deposit(256)
