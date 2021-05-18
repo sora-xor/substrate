@@ -210,6 +210,10 @@ pub mod pallet {
 		AtMaxVestingSchedules,
 		/// Amount being transferred is too low to create a vesting schedule.
 		AmountLow,
+		/// There are not at least 2 schedules to merge.
+		NotEnoughSchedules,
+		/// At least one of the indexes is out of bounds of the vesting schedules.
+		ScheduleIndexOutOfBounds
 	}
 
 	#[pallet::hooks]
@@ -312,6 +316,76 @@ pub mod pallet {
 		) -> DispatchResult {
 			ensure_root(origin)?;
 			Self::do_vested_transfer(source, target, schedule)
+		}
+
+		/// Merge two vesting schedules together, creating a new vesting schedule that vests over
+		/// the maximum of the original two schedules duration.
+		///
+		/// The dispatch origin for this call must be _Signed_.
+		///
+		/// - `schedule_index1`: TODO
+		/// - `schedule_index2`: TODO
+		///
+		/// # <weight>
+		/// - `O(1)`.
+		/// - DbWeight: TODO Reads, TODO Writes
+		///     - Reads: TODO
+		///     - Writes: TODO
+		/// # </weight>
+		#[pallet::weight(T::WeightInfo::force_vested_transfer(MaxLocksOf::<T>::get()))] // TODO
+		pub fn merge_schedules(
+			origin: OriginFor<T>,
+			schedule_index1: u32,
+			schedule_index2: u32
+		) -> DispatchResult {
+			let who = ensure_signed(origin)?;
+
+			if schedule_index1 == schedule_index2 {
+				// Exit early if the indexes are the same. For efficiency sake, we don't bother
+				// checking if they are valid
+				return Ok(())
+			}
+
+			let schedules = Self::vesting(&who);
+			ensure!(schedules.is_some(), Error::<T>::NotEnoughSchedules);
+
+			let schedules: BoundedVec<
+				VestingInfo<BalanceOf<T>,
+				T::BlockNumber>, T::MaxVestingSchedules
+			> = schedules.unwrap();
+			let len = schedules.len();
+			ensure!(len >= 2, Error::<T>::NotEnoughSchedules);
+
+			let schedule_index1 = schedule_index1 as usize;
+			let schedule_index2 = schedule_index2 as usize;
+			ensure!(schedule_index1 < len && schedule_index2 < len, Error::<T>::ScheduleIndexOutOfBounds);
+
+			let schedule1 = schedules[schedule_index1];
+			let schedule2 = schedules[schedule_index2];
+			// TODO should we vest both schedules before merging?
+			let merged_schedule = VestingInfo {
+				locked: schedule1.locked.saturating_add(schedule2.locked),
+				starting_block: schedule1.starting_block.max(schedule2.starting_block),
+				per_block: schedule1.per_block.min(schedule2.per_block)
+			};
+			// Remove the schedules that we are merging
+			let mut schedules: Vec<VestingInfo<BalanceOf<T>, T::BlockNumber>>  = schedules
+				.into_iter()
+				.enumerate()
+				.filter_map(|(i, schedule)|
+					if i == schedule_index1 || i == schedule_index2 {
+						None
+					} else {
+						Some(schedule)
+					}
+				)
+				.collect();
+			schedules.push(merged_schedule);
+
+			let schedules: BoundedVec<_, T::MaxVestingSchedules> = schedules.try_into()
+				.expect("`BoundedVec` is created from another `BoundedVec` with same bound; q.e.d.");
+			Vesting::<T>::insert(&who, schedules);
+			Ok(())
 		}
 	}
 }
@@ -963,7 +1037,7 @@ mod tests {
 			.existential_deposit(256)
 			.build()
 			.execute_with(|| {
-				
+
 			})
 	}
 }
