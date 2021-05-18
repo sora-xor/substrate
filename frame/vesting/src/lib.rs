@@ -50,7 +50,7 @@ pub mod weights;
 use sp_std::{prelude::*, fmt::Debug, convert::TryInto};
 use codec::{Encode, Decode};
 use sp_runtime::{RuntimeDebug, traits::{
-	StaticLookup, Zero, AtLeast32BitUnsigned, MaybeSerializeDeserialize, Convert
+	StaticLookup, Zero, AtLeast32BitUnsigned, MaybeSerializeDeserialize, Convert, Saturating
 }};
 use frame_support::{ensure, pallet_prelude::*};
 use frame_support::traits::{
@@ -179,8 +179,7 @@ pub mod pallet {
 				let schedules: BoundedVec<
 					VestingInfo<BalanceOf<T>, T::BlockNumber>,
 					T::MaxVestingSchedules
-				> = vec![vesting_info].try_into().unwrap();
-
+				> = vec![vesting_info].try_into().expect("Too many vesting schedules at genesis.");
 
 				Vesting::<T>::insert(who, schedules);
 				let reasons = WithdrawReasons::TRANSFER | WithdrawReasons::RESERVE;
@@ -344,16 +343,19 @@ impl<T: Config> Pallet<T> {
 	fn update_lock(who: T::AccountId) -> DispatchResult {
 		let vesting = Self::vesting(&who).ok_or(Error::<T>::NotVesting)?;
 		let now = <frame_system::Pallet<T>>::block_number();
-		let locked_now = vesting[0].locked_at::<T::BlockNumberToBalance>(now);
 
-		if locked_now.is_zero() {
+ 		let total_locked_now = vesting.iter().fold(Zero::zero(), |sum, schedule|
+			schedule.locked_at::<T::BlockNumberToBalance>(now).saturating_add(sum)
+		);
+
+		if total_locked_now.is_zero() {
 			T::Currency::remove_lock(VESTING_ID, &who);
 			Vesting::<T>::remove(&who);
 			Self::deposit_event(Event::<T>::VestingCompleted(who));
 		} else {
 			let reasons = WithdrawReasons::TRANSFER | WithdrawReasons::RESERVE;
-			T::Currency::set_lock(VESTING_ID, &who, locked_now, reasons);
-			Self::deposit_event(Event::<T>::VestingUpdated(who, locked_now));
+			T::Currency::set_lock(VESTING_ID, &who, total_locked_now, reasons);
+			Self::deposit_event(Event::<T>::VestingUpdated(who, total_locked_now));
 		}
 		Ok(())
 	}
