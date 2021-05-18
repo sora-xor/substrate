@@ -347,15 +347,28 @@ impl<T: Config> Pallet<T> {
 		let vesting = Self::vesting(&who).ok_or(Error::<T>::NotVesting)?;
 		let now = <frame_system::Pallet<T>>::block_number();
 
- 		let total_locked_now = vesting.iter().fold(Zero::zero(), |sum, schedule|
-			schedule.locked_at::<T::BlockNumberToBalance>(now).saturating_add(sum)
-		);
+		let mut total_locked_now: BalanceOf<T> = Zero::zero();
+		let still_vesting: Vec<VestingInfo<BalanceOf<T>, T::BlockNumber>> = vesting
+			.into_iter()
+			.filter_map(| schedule | {
+				let locked_now = schedule.locked_at::<T::BlockNumberToBalance>(now);
+				if locked_now.is_zero() {
+					None
+				} else {
+					total_locked_now = total_locked_now.saturating_add(locked_now);
+					Some(schedule)
+				}
+			})
+			.collect();
 
 		if total_locked_now.is_zero() {
 			T::Currency::remove_lock(VESTING_ID, &who);
 			Vesting::<T>::remove(&who);
 			Self::deposit_event(Event::<T>::VestingCompleted(who));
 		} else {
+			let still_vesting: BoundedVec<_, T::MaxVestingSchedules> = still_vesting.try_into()
+				.expect("Bounded vec is created from another bounded vec with same bound.");
+			Vesting::<T>::insert(&who, still_vesting);
 			let reasons = WithdrawReasons::TRANSFER | WithdrawReasons::RESERVE;
 			T::Currency::set_lock(VESTING_ID, &who, total_locked_now, reasons);
 			Self::deposit_event(Event::<T>::VestingUpdated(who, total_locked_now));
