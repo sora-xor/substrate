@@ -365,7 +365,7 @@ impl<T: Config> Pallet<T> {
 			Self::deposit_event(Event::<T>::VestingCompleted(who));
 		} else {
 			let still_vesting: BoundedVec<_, T::MaxVestingSchedules> = still_vesting.try_into()
-				.expect("Bounded vec is created from another bounded vec with same bound.");
+				.expect("`BoundedVec` is created from another `BoundedVec` with same bound; q.e.d.");
 			Vesting::<T>::insert(&who, still_vesting);
 			let reasons = WithdrawReasons::TRANSFER | WithdrawReasons::RESERVE;
 			T::Currency::set_lock(VESTING_ID, &who, total_locked_now, reasons);
@@ -587,8 +587,12 @@ mod tests {
 					starting_block: 10,
 				};
 				assert_eq!(Vesting::vesting(&1).unwrap()[0], user1_vesting_schedule); // Account 1 has a vesting schedule
+				assert_eq!(Vesting::vesting(&1).unwrap().len(), 1);
 				assert_eq!(Vesting::vesting(&2).unwrap()[0], user2_vesting_schedule); // Account 2 has a vesting schedule
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
 				assert_eq!(Vesting::vesting(&12).unwrap()[0], user12_vesting_schedule); // Account 12 has a vesting schedule
+				assert_eq!(Vesting::vesting(&12).unwrap().len(), 1);
+
 
 				// Account 1 has only 128 units vested from their illiquid 256 * 5 units at block 1
 				assert_eq!(Vesting::vesting_balance(&1), Some(128 * 9));
@@ -613,7 +617,6 @@ mod tests {
 				assert_eq!(Vesting::vesting_balance(&1), Some(0)); // Account 1 is still fully vested, and not negative
 				assert_eq!(Vesting::vesting_balance(&2), Some(0)); // Account 2 has fully vested by block 30
 				assert_eq!(Vesting::vesting_balance(&12), Some(0)); // Account 2 has fully vested by block 30
-
 			});
 	}
 
@@ -710,6 +713,7 @@ mod tests {
 					starting_block: 10,
 				};
 				assert_eq!(Vesting::vesting(&12).unwrap()[0], user12_vesting_schedule);
+				assert_eq!(Vesting::vesting(&12).unwrap().len(), 1);
 
 				// Account 12 can still send liquid funds
 				assert_ok!(Balances::transfer(Some(12).into(), 3, 256 * 5));
@@ -737,6 +741,7 @@ mod tests {
 				assert_ok!(Vesting::vested_transfer(Some(3).into(), 4, new_vesting_schedule));
 				// Now account 4 should have vesting.
 				assert_eq!(Vesting::vesting(&4).unwrap()[0], new_vesting_schedule);
+				assert_eq!(Vesting::vesting(&4).unwrap().len(), 1);
 				// Ensure the transfer happened correctly.
 				let user3_free_balance_updated = Balances::free_balance(&3);
 				assert_eq!(user3_free_balance_updated, 256 * 25);
@@ -776,6 +781,7 @@ mod tests {
 					starting_block: 10,
 				};
 				assert_eq!(Vesting::vesting(&2).unwrap()[0], user2_vesting_schedule);
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
 				for _ in 0..<Test as Config>::MaxVestingSchedules::get() - 1{
 					assert_eq!(Vesting::vested_transfer(Some(4).into(), 2, user2_vesting_schedule), Ok(()));
 				}
@@ -824,6 +830,7 @@ mod tests {
 				assert_ok!(Vesting::force_vested_transfer(RawOrigin::Root.into(), 3, 4, new_vesting_schedule));
 				// Now account 4 should have vesting.
 				assert_eq!(Vesting::vesting(&4).unwrap()[0], new_vesting_schedule);
+				assert_eq!(Vesting::vesting(&4).unwrap().len(), 1);
 				// Ensure the transfer happened correctly.
 				let user3_free_balance_updated = Balances::free_balance(&3);
 				assert_eq!(user3_free_balance_updated, 256 * 25);
@@ -863,6 +870,7 @@ mod tests {
 					starting_block: 10,
 				};
 				assert_eq!(Vesting::vesting(&2).unwrap()[0], user2_vesting_schedule);
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
 
 				let new_vesting_schedule = VestingInfo {
 					locked: 256 * 5,
@@ -947,5 +955,15 @@ mod tests {
 					Error::<Test>::AtMaxVestingSchedules,
 				);
 			});
+	}
+
+	#[test]
+	fn merge_schedules_works() {
+		ExtBuilder::default()
+			.existential_deposit(256)
+			.build()
+			.execute_with(|| {
+				
+			})
 	}
 }
