@@ -47,11 +47,10 @@
 mod benchmarking;
 pub mod weights;
 
-use sp_std::prelude::*;
-use sp_std::fmt::Debug;
+use sp_std::{prelude::*, fmt::Debug, convert::TryInto};
 use codec::{Encode, Decode};
 use sp_runtime::{RuntimeDebug, traits::{
-	StaticLookup, Zero, AtLeast32BitUnsigned, MaybeSerializeDeserialize, Convert
+	StaticLookup, Zero, AtLeast32BitUnsigned, MaybeSerializeDeserialize, Convert, Saturating
 }};
 use frame_support::{ensure, pallet_prelude::*};
 use frame_support::traits::{
@@ -98,6 +97,14 @@ impl<
 			Zero::zero()
 		}
 	}
+
+	/// Block number of when this schedule ends
+	pub fn end_block<
+		BlockNumberToBalance: Convert<BlockNumber, Balance>
+	>(&self) -> Balance {
+		let starting_block = BlockNumberToBalance::convert(self.starting_block);
+		starting_block + (self.locked / self.per_block)
+	}
 }
 
 #[frame_support::pallet]
@@ -121,6 +128,10 @@ pub mod pallet {
 
 		/// Weight information for extrinsics in this pallet.
 		type WeightInfo: WeightInfo;
+
+		/// Maximum number of vesting schedules an account may have at a given moment.
+		#[pallet::constant]
+		type MaxVestingSchedules: Get<u32>;
 	}
 
 	/// Information regarding the vesting of a given account.
@@ -130,7 +141,7 @@ pub mod pallet {
 		_,
 		Blake2_128Concat,
 		T::AccountId,
-		VestingInfo<BalanceOf<T>, T::BlockNumber>,
+		BoundedVec<VestingInfo<BalanceOf<T>, T::BlockNumber>, T::MaxVestingSchedules>
 	>;
 
 	#[pallet::pallet]
@@ -168,12 +179,17 @@ pub mod pallet {
 				let locked = balance.saturating_sub(liquid);
 				let length_as_balance = T::BlockNumberToBalance::convert(length);
 				let per_block = locked / length_as_balance.max(sp_runtime::traits::One::one());
-
-				Vesting::<T>::insert(who, VestingInfo {
+				let vesting_info = VestingInfo {
 					locked: locked,
 					per_block: per_block,
 					starting_block: begin
-				});
+				};
+				let schedules: BoundedVec<
+					VestingInfo<BalanceOf<T>, T::BlockNumber>,
+					T::MaxVestingSchedules
+				> = vec![vesting_info].try_into().expect("Too many vesting schedules at genesis.");
+
+				Vesting::<T>::insert(who, schedules);
 				let reasons = WithdrawReasons::TRANSFER | WithdrawReasons::RESERVE;
 				T::Currency::set_lock(VESTING_ID, who, locked, reasons);
 			}
@@ -197,10 +213,15 @@ pub mod pallet {
 	pub enum Error<T> {
 		/// The account given is not vesting.
 		NotVesting,
-		/// An existing vesting schedule already exists for this account that cannot be clobbered.
-		ExistingVestingSchedule,
+		/// The account already has `MaxVestingSchedules` number of schedules and thus
+		/// cannot add another one. Consider merging existing schedules in order to add another.
+		AtMaxVestingSchedules,
 		/// Amount being transferred is too low to create a vesting schedule.
 		AmountLow,
+		/// There are not at least 2 schedules to merge.
+		NotEnoughSchedules,
+		/// At least one of the indexes is out of bounds of the vesting schedules.
+		ScheduleIndexOutOfBounds
 	}
 
 	#[pallet::hooks]
@@ -226,7 +247,7 @@ pub mod pallet {
 		)]
 		pub fn vest(origin: OriginFor<T>) -> DispatchResult {
 			let who = ensure_signed(origin)?;
-			Self::update_lock(who)
+			Self::update_lock_and_prune_schedules(who)
 		}
 
 		/// Unlock any vested funds of a `target` account.
@@ -249,7 +270,7 @@ pub mod pallet {
 		)]
 		pub fn vest_other(origin: OriginFor<T>, target: <T::Lookup as StaticLookup>::Source) -> DispatchResult {
 			ensure_signed(origin)?;
-			Self::update_lock(T::Lookup::lookup(target)?)
+			Self::update_lock_and_prune_schedules(T::Lookup::lookup(target)?)
 		}
 
 		/// Create a vested transfer.
@@ -257,7 +278,6 @@ pub mod pallet {
 		/// The dispatch origin for this call must be _Signed_.
 		///
 		/// - `target`: The account that should be transferred the vested funds.
-		/// - `amount`: The amount of funds to transfer and will be vested.
 		/// - `schedule`: The vesting schedule attached to the transfer.
 		///
 		/// Emits `VestingCreated`.
@@ -275,17 +295,8 @@ pub mod pallet {
 			schedule: VestingInfo<BalanceOf<T>, T::BlockNumber>,
 		) -> DispatchResult {
 			let transactor = ensure_signed(origin)?;
-			ensure!(schedule.locked >= T::MinVestedTransfer::get(), Error::<T>::AmountLow);
-
-			let who = T::Lookup::lookup(target)?;
-			ensure!(!Vesting::<T>::contains_key(&who), Error::<T>::ExistingVestingSchedule);
-
-			T::Currency::transfer(&transactor, &who, schedule.locked, ExistenceRequirement::AllowDeath)?;
-
-			Self::add_vesting_schedule(&who, schedule.locked, schedule.per_block, schedule.starting_block)
-				.expect("user does not have an existing vesting schedule; q.e.d.");
-
-			Ok(())
+			let transactor = <T::Lookup as StaticLookup>::unlookup(transactor);
+			Self::do_vested_transfer(transactor, target, schedule)
 		}
 
 		/// Force a vested transfer.
@@ -294,7 +305,6 @@ pub mod pallet {
 		///
 		/// - `source`: The account whose funds should be transferred.
 		/// - `target`: The account that should be transferred the vested funds.
-		/// - `amount`: The amount of funds to transfer and will be vested.
 		/// - `schedule`: The vesting schedule attached to the transfer.
 		///
 		/// Emits `VestingCreated`.
@@ -313,16 +323,86 @@ pub mod pallet {
 			schedule: VestingInfo<BalanceOf<T>, T::BlockNumber>,
 		) -> DispatchResult {
 			ensure_root(origin)?;
-			ensure!(schedule.locked >= T::MinVestedTransfer::get(), Error::<T>::AmountLow);
+			Self::do_vested_transfer(source, target, schedule)
+		}
 
-			let target = T::Lookup::lookup(target)?;
-			let source = T::Lookup::lookup(source)?;
-			ensure!(!Vesting::<T>::contains_key(&target), Error::<T>::ExistingVestingSchedule);
+		/// Merge two vesting schedules together, creating a new vesting schedule that vests over
+		/// the maximum of the original two schedules duration.
+		///
+		/// The dispatch origin for this call must be _Signed_.
+		///
+		/// - `schedule_index1`: TODO
+		/// - `schedule_index2`: TODO
+		///
+		/// # <weight>
+		/// - `O(1)`.
+		/// - DbWeight: TODO Reads, TODO Writes
+		///     - Reads: TODO
+		///     - Writes: TODO
+		/// # </weight>
+		#[pallet::weight(T::WeightInfo::force_vested_transfer(MaxLocksOf::<T>::get()))] // TODO
+		pub fn merge_schedules(
+			origin: OriginFor<T>,
+			schedule_index1: u32,
+			schedule_index2: u32
+		) -> DispatchResult {
+			let who = ensure_signed(origin)?;
 
-			T::Currency::transfer(&source, &target, schedule.locked, ExistenceRequirement::AllowDeath)?;
+			// Vest according to existing schedules. Note: Downstream logic here assumes `who`
+			// has vested up through the current block.
+			let schedules = Self::vesting(&who).ok_or(Error::<T>::NotVesting)?;
+			let len = schedules.len();
+			ensure!(len >= 2, Error::<T>::NotEnoughSchedules);
 
-			Self::add_vesting_schedule(&target, schedule.locked, schedule.per_block, schedule.starting_block)
-				.expect("user does not have an existing vesting schedule; q.e.d.");
+			let schedule_index1 = schedule_index1 as usize;
+			let schedule_index2 = schedule_index2 as usize;
+			ensure!(schedule_index1 < len && schedule_index2 < len, Error::<T>::ScheduleIndexOutOfBounds);
+			// The schedule index is based off of the schedule ordering prior to filtering out any
+			// schedules that may have completed at this block.
+			let schedule1 = schedules[schedule_index1];
+			let schedule2 = schedules[schedule_index2];
+
+			let now = <frame_system::Pallet<T>>::block_number();
+			let mut total_locked_now: BalanceOf<T> = Zero::zero();
+			// Filter out the schedules that have completed and the schedules the user whishes to merge.
+			// Additionally, we track the total locked so we can update the users locks. Note: we
+			// include the locked balance from the schedules that will get merged.
+			let mut schedules: Vec<VestingInfo<BalanceOf<T>, T::BlockNumber>> = schedules
+				.into_iter()
+				.enumerate()
+				.filter_map(| (i, schedule) | { // TODO use filter
+					let locked_now = schedule.locked_at::<T::BlockNumberToBalance>(now);
+					total_locked_now = total_locked_now.saturating_add(locked_now);
+					if locked_now.is_zero() || i == schedule_index1 || i == schedule_index2 {
+						None
+					} else {
+						Some(schedule)
+					}
+				})
+				.collect();
+
+			// Update the users vesting lock
+			if total_locked_now.is_zero() {
+				// There are not any schedules to merge once we account for vesting up through
+				// the current block.
+				T::Currency::remove_lock(VESTING_ID, &who);
+				Vesting::<T>::remove(&who);
+				Self::deposit_event(Event::<T>::VestingCompleted(who));
+				return Ok(())
+			}
+			let reasons = WithdrawReasons::TRANSFER | WithdrawReasons::RESERVE;
+			T::Currency::set_lock(VESTING_ID, &who, total_locked_now, reasons);
+			Self::deposit_event(Event::<T>::VestingUpdated(who.clone(), total_locked_now));
+
+			let merged_schedule = Self::merge_vesting_info(now, schedule1, schedule2);
+			// TODO merged schedule created event? Arguable can be calculated off chain unless we are
+			// worried about arithmetic replication
+
+			// Add the new merged schedule to the user's schedules.
+			schedules.push(merged_schedule);
+			let schedules: BoundedVec<_, T::MaxVestingSchedules> = schedules.try_into()
+				.expect("`BoundedVec` is created from another `BoundedVec` with same bound; q.e.d.");
+			Vesting::<T>::insert(&who, schedules);
 
 			Ok(())
 		}
@@ -330,21 +410,79 @@ pub mod pallet {
 }
 
 impl<T: Config> Pallet<T> {
+	// Create a new `VestingInfo`, based off of two other `VestingInfo`s.
+	// Note: We assume both schedules have been vested up through the current block.
+	fn merge_vesting_info(
+		now: T::BlockNumber,
+		schedule1: VestingInfo<BalanceOf<T>, T::BlockNumber>,
+		schedule2: VestingInfo<BalanceOf<T>, T::BlockNumber>,
+	) -> VestingInfo<BalanceOf<T>, T::BlockNumber> {
+		let locked = schedule1.locked_at::<T::BlockNumberToBalance>(now)
+			.saturating_add(schedule2.locked_at::<T::BlockNumberToBalance>(now));
+		let ending_block = schedule1.end_block::<T::BlockNumberToBalance>()
+			.max(schedule2.end_block::<T::BlockNumberToBalance>());
+		let starting_block = now
+			.max(schedule1.starting_block)
+			.max(schedule2.starting_block);
+		let remaining_blocks = ending_block.saturating_sub(T::BlockNumberToBalance::convert(starting_block));
+		let per_block = locked / remaining_blocks;
+
+		VestingInfo { locked, starting_block, per_block }
+	}
+
+	// Execute a vested transfer from `source` to `target` with the given `schedule`.
+	fn do_vested_transfer(
+		source: <T::Lookup as StaticLookup>::Source,
+		target: <T::Lookup as StaticLookup>::Source,
+		schedule: VestingInfo<BalanceOf<T>, T::BlockNumber>
+	) -> DispatchResult {
+		ensure!(schedule.locked >= T::MinVestedTransfer::get(), Error::<T>::AmountLow);
+
+		let target = T::Lookup::lookup(target)?;
+		let source = T::Lookup::lookup(source)?;
+		if let Some(len) = Vesting::<T>::decode_len(&target) {
+			ensure!(len < T::MaxVestingSchedules::get() as usize, Error::<T>::AtMaxVestingSchedules);
+		}
+
+		T::Currency::transfer(&source, &target, schedule.locked, ExistenceRequirement::AllowDeath)?;
+
+		Self::add_vesting_schedule(&target, schedule.locked, schedule.per_block, schedule.starting_block)
+			.expect("user has less than `MaxVestingSchedules` schedules; q.e.d.");
+
+		Ok(())
+	}
+
 	/// (Re)set or remove the pallet's currency lock on `who`'s account in accordance with their
-	/// current unvested amount.
-	fn update_lock(who: T::AccountId) -> DispatchResult {
+	/// current unvested amount and prune any vesting schedules that have completed.
+	fn update_lock_and_prune_schedules(who: T::AccountId) -> DispatchResult {
 		let vesting = Self::vesting(&who).ok_or(Error::<T>::NotVesting)?;
 		let now = <frame_system::Pallet<T>>::block_number();
-		let locked_now = vesting.locked_at::<T::BlockNumberToBalance>(now);
 
-		if locked_now.is_zero() {
+		let mut total_locked_now: BalanceOf<T> = Zero::zero();
+		let still_vesting: Vec<VestingInfo<BalanceOf<T>, T::BlockNumber>> = vesting
+			.into_iter()
+			.filter_map(| schedule | { // TODO can just be a filter
+				let locked_now = schedule.locked_at::<T::BlockNumberToBalance>(now);
+				if locked_now.is_zero() {
+					None
+				} else {
+					total_locked_now = total_locked_now.saturating_add(locked_now);
+					Some(schedule)
+				}
+			})
+			.collect();
+
+		if total_locked_now.is_zero() {
 			T::Currency::remove_lock(VESTING_ID, &who);
 			Vesting::<T>::remove(&who);
 			Self::deposit_event(Event::<T>::VestingCompleted(who));
 		} else {
+			let still_vesting: BoundedVec<_, T::MaxVestingSchedules> = still_vesting.try_into()
+				.expect("`BoundedVec` is created from another `BoundedVec` with same bound; q.e.d.");
+			Vesting::<T>::insert(&who, still_vesting);
 			let reasons = WithdrawReasons::TRANSFER | WithdrawReasons::RESERVE;
-			T::Currency::set_lock(VESTING_ID, &who, locked_now, reasons);
-			Self::deposit_event(Event::<T>::VestingUpdated(who, locked_now));
+			T::Currency::set_lock(VESTING_ID, &who, total_locked_now, reasons);
+			Self::deposit_event(Event::<T>::VestingUpdated(who, total_locked_now));
 		}
 		Ok(())
 	}
@@ -356,12 +494,16 @@ impl<T: Config> VestingSchedule<T::AccountId> for Pallet<T> where
 	type Moment = T::BlockNumber;
 	type Currency = T::Currency;
 
+	// TODO should we expose merge vesting schedules here?
+
 	/// Get the amount that is currently being vested and cannot be transferred out of this account.
 	fn vesting_balance(who: &T::AccountId) -> Option<BalanceOf<T>> {
 		if let Some(v) = Self::vesting(who) {
 			let now = <frame_system::Pallet<T>>::block_number();
-			let locked_now = v.locked_at::<T::BlockNumberToBalance>(now);
-			Some(T::Currency::free_balance(who).min(locked_now))
+			let total_locked_now = v.iter().fold(Zero::zero(), |total, schedule| {
+				schedule.locked_at::<T::BlockNumberToBalance>(now).saturating_add(total)
+			});
+			Some(T::Currency::free_balance(who).min(total_locked_now))
 		} else {
 			None
 		}
@@ -384,26 +526,30 @@ impl<T: Config> VestingSchedule<T::AccountId> for Pallet<T> where
 		starting_block: T::BlockNumber
 	) -> DispatchResult {
 		if locked.is_zero() { return Ok(()) }
-		if Vesting::<T>::contains_key(who) {
-			Err(Error::<T>::ExistingVestingSchedule)?
+		if let Some(len) = Vesting::<T>::decode_len(&who) {
+			ensure!(len < T::MaxVestingSchedules::get() as usize, Error::<T>::AtMaxVestingSchedules);
 		}
 		let vesting_schedule = VestingInfo {
 			locked,
 			per_block,
 			starting_block
 		};
-		Vesting::<T>::insert(who, vesting_schedule);
+		Vesting::<T>::try_append(who, vesting_schedule).expect("BoundedVec bounds checked prior to write.");
 		// it can't fail, but even if somehow it did, we don't really care.
-		let res = Self::update_lock(who.clone());
+		let res = Self::update_lock_and_prune_schedules(who.clone());
 		debug_assert!(res.is_ok());
 		Ok(())
 	}
 
 	/// Remove a vesting schedule for a given account.
-	fn remove_vesting_schedule(who: &T::AccountId) {
+	fn remove_vesting_schedule(who: &T::AccountId) { // TODO needs to remove by index
+		// read in vec
+		// check bounds
+		// remove() index
+		// write vec back
 		Vesting::<T>::remove(who);
 		// it can't fail, but even if somehow it did, we don't really care.
-		let res = Self::update_lock(who.clone());
+		let res = Self::update_lock_and_prune_schedules(who.clone());
 		debug_assert!(res.is_ok());
 	}
 }
@@ -481,6 +627,7 @@ mod tests {
 	parameter_types! {
 		pub const MinVestedTransfer: u64 = 256 * 2;
 		pub static ExistentialDeposit: u64 = 0;
+		pub const MaxVestingSchedules: u32 = 3;
 	}
 	impl Config for Test {
 		type Event = Event;
@@ -488,6 +635,7 @@ mod tests {
 		type BlockNumberToBalance = Identity;
 		type MinVestedTransfer = MinVestedTransfer;
 		type WeightInfo = ();
+		type MaxVestingSchedules = MaxVestingSchedules;
 	}
 
 	pub struct ExtBuilder {
@@ -557,9 +705,13 @@ mod tests {
 					per_block: 64, // Vesting over 20 blocks
 					starting_block: 10,
 				};
-				assert_eq!(Vesting::vesting(&1), Some(user1_vesting_schedule)); // Account 1 has a vesting schedule
-				assert_eq!(Vesting::vesting(&2), Some(user2_vesting_schedule)); // Account 2 has a vesting schedule
-				assert_eq!(Vesting::vesting(&12), Some(user12_vesting_schedule)); // Account 12 has a vesting schedule
+				assert_eq!(Vesting::vesting(&1).unwrap()[0], user1_vesting_schedule); // Account 1 has a vesting schedule
+				assert_eq!(Vesting::vesting(&1).unwrap().len(), 1);
+				assert_eq!(Vesting::vesting(&2).unwrap()[0], user2_vesting_schedule); // Account 2 has a vesting schedule
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
+				assert_eq!(Vesting::vesting(&12).unwrap()[0], user12_vesting_schedule); // Account 12 has a vesting schedule
+				assert_eq!(Vesting::vesting(&12).unwrap().len(), 1);
+
 
 				// Account 1 has only 128 units vested from their illiquid 256 * 5 units at block 1
 				assert_eq!(Vesting::vesting_balance(&1), Some(128 * 9));
@@ -584,7 +736,6 @@ mod tests {
 				assert_eq!(Vesting::vesting_balance(&1), Some(0)); // Account 1 is still fully vested, and not negative
 				assert_eq!(Vesting::vesting_balance(&2), Some(0)); // Account 2 has fully vested by block 30
 				assert_eq!(Vesting::vesting_balance(&12), Some(0)); // Account 2 has fully vested by block 30
-
 			});
 	}
 
@@ -680,7 +831,8 @@ mod tests {
 					per_block: 64, // Vesting over 20 blocks
 					starting_block: 10,
 				};
-				assert_eq!(Vesting::vesting(&12), Some(user12_vesting_schedule));
+				assert_eq!(Vesting::vesting(&12).unwrap()[0], user12_vesting_schedule);
+				assert_eq!(Vesting::vesting(&12).unwrap().len(), 1);
 
 				// Account 12 can still send liquid funds
 				assert_ok!(Balances::transfer(Some(12).into(), 3, 256 * 5));
@@ -707,7 +859,8 @@ mod tests {
 				};
 				assert_ok!(Vesting::vested_transfer(Some(3).into(), 4, new_vesting_schedule));
 				// Now account 4 should have vesting.
-				assert_eq!(Vesting::vesting(&4), Some(new_vesting_schedule));
+				assert_eq!(Vesting::vesting(&4).unwrap()[0], new_vesting_schedule);
+				assert_eq!(Vesting::vesting(&4).unwrap().len(), 1);
 				// Ensure the transfer happened correctly.
 				let user3_free_balance_updated = Balances::free_balance(&3);
 				assert_eq!(user3_free_balance_updated, 256 * 25);
@@ -746,17 +899,15 @@ mod tests {
 					per_block: 256, // Vesting over 20 blocks
 					starting_block: 10,
 				};
-				assert_eq!(Vesting::vesting(&2), Some(user2_vesting_schedule));
-
-				// The vesting schedule we will try to create, fails due to pre-existence of schedule.
-				let new_vesting_schedule = VestingInfo {
-					locked: 256 * 5,
-					per_block: 64, // Vesting over 20 blocks
-					starting_block: 10,
-				};
+				assert_eq!(Vesting::vesting(&2).unwrap()[0], user2_vesting_schedule);
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
+				for _ in 0..<Test as Config>::MaxVestingSchedules::get() - 1{
+					assert_eq!(Vesting::vested_transfer(Some(4).into(), 2, user2_vesting_schedule), Ok(()));
+				}
+				// Try to insert a 4th vesting schedule when `MaxVestingSchedules` === 3
 				assert_noop!(
-					Vesting::vested_transfer(Some(4).into(), 2, new_vesting_schedule),
-					Error::<Test>::ExistingVestingSchedule,
+					Vesting::vested_transfer(Some(4).into(), 2, user2_vesting_schedule),
+					Error::<Test>::AtMaxVestingSchedules,
 				);
 
 				// Fails due to too low transfer amount.
@@ -797,7 +948,8 @@ mod tests {
 				assert_noop!(Vesting::force_vested_transfer(Some(4).into(), 3, 4, new_vesting_schedule), BadOrigin);
 				assert_ok!(Vesting::force_vested_transfer(RawOrigin::Root.into(), 3, 4, new_vesting_schedule));
 				// Now account 4 should have vesting.
-				assert_eq!(Vesting::vesting(&4), Some(new_vesting_schedule));
+				assert_eq!(Vesting::vesting(&4).unwrap()[0], new_vesting_schedule);
+				assert_eq!(Vesting::vesting(&4).unwrap().len(), 1);
 				// Ensure the transfer happened correctly.
 				let user3_free_balance_updated = Balances::free_balance(&3);
 				assert_eq!(user3_free_balance_updated, 256 * 25);
@@ -836,17 +988,23 @@ mod tests {
 					per_block: 256, // Vesting over 20 blocks
 					starting_block: 10,
 				};
-				assert_eq!(Vesting::vesting(&2), Some(user2_vesting_schedule));
+				assert_eq!(Vesting::vesting(&2).unwrap()[0], user2_vesting_schedule);
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
 
-				// The vesting schedule we will try to create, fails due to pre-existence of schedule.
 				let new_vesting_schedule = VestingInfo {
 					locked: 256 * 5,
 					per_block: 64, // Vesting over 20 blocks
 					starting_block: 10,
 				};
+				for _ in 0..<Test as Config>::MaxVestingSchedules::get() - 1 {
+					assert_eq!(
+						Vesting::force_vested_transfer(RawOrigin::Root.into(), 4, 2, new_vesting_schedule),
+						Ok(())
+					);
+				}
 				assert_noop!(
 					Vesting::force_vested_transfer(RawOrigin::Root.into(), 4, 2, new_vesting_schedule),
-					Error::<Test>::ExistingVestingSchedule,
+					Error::<Test>::AtMaxVestingSchedules,
 				);
 
 				// Fails due to too low transfer amount.
@@ -864,5 +1022,173 @@ mod tests {
 				assert_eq!(user2_free_balance, 256 * 20);
 				assert_eq!(user4_free_balance, 256 * 40);
 			});
+	}
+
+	#[test]
+	fn max_vesting_schedules_bounds_vesting_schedules() {
+		ExtBuilder::default()
+			.existential_deposit(256)
+			.build()
+			.execute_with(|| {
+				let new_vesting_schedule = VestingInfo {
+					locked: 256 * 5,
+					per_block: 64, // Vesting over 20 blocks
+					starting_block: 10,
+				};
+				// User 4 has a balance to transfer
+				let user4_free_balance = Balances::free_balance(&4);
+				assert_eq!(user4_free_balance, 256 * 40);
+
+				assert_eq!(Vesting::vesting(&3), None);
+				for _ in 0..<Test as Config>::MaxVestingSchedules::get() {
+					assert_eq!(Vesting::vested_transfer(Some(4).into(), 3, new_vesting_schedule), Ok(()));
+				}
+				assert_noop!(
+					Vesting::vested_transfer(Some(4).into(), 3, new_vesting_schedule),
+					Error::<Test>::AtMaxVestingSchedules,
+				);
+			});
+
+		ExtBuilder::default()
+			.existential_deposit(256)
+			.build()
+			.execute_with(|| {
+				let new_vesting_schedule = VestingInfo {
+					locked: 256 * 5,
+					per_block: 64, // Vesting over 20 blocks
+					starting_block: 10,
+				};
+				// User 4 has a balance to transfer
+				let user4_free_balance = Balances::free_balance(&4);
+				assert_eq!(user4_free_balance, 256 * 40);
+
+				assert_eq!(Vesting::vesting(&3), None);
+				for _ in 0..<Test as Config>::MaxVestingSchedules::get() {
+					assert_eq!(
+						Vesting::force_vested_transfer(RawOrigin::Root.into(), 4, 3, new_vesting_schedule),
+						Ok(())
+					);
+				}
+				assert_noop!(
+					Vesting::force_vested_transfer(RawOrigin::Root.into(), 4, 3, new_vesting_schedule),
+					Error::<Test>::AtMaxVestingSchedules,
+				);
+			});
+	}
+
+	#[test]
+	fn merge_schedules_basics_works() {
+		ExtBuilder::default()
+			.existential_deposit(256)
+			.build()
+			.execute_with(|| {
+				// Account 2 should already have a vesting schedule.
+				let sched_0 = VestingInfo {
+					locked: 256 * 20,
+					per_block: 256, // Vesting over 20 blocks
+					starting_block: 10,
+				};
+				assert_eq!(Vesting::vesting(&2).unwrap()[0], sched_0);
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
+
+				/* Merging two identical schedules results in a schedule at the same end block */
+				// Add a schedule that is identical to the one that already exists
+				Vesting::vested_transfer(Some(3).into(), 2, sched_0).unwrap();
+				assert_eq!(Vesting::vesting(&2).unwrap()[1], sched_0);
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 2);
+				// Go to block 10 where the schedules start
+				let cur_block = 10;
+				System::set_block_number(cur_block);
+				Vesting::merge_schedules(Some(2).into(), 0, 1).unwrap();
+				// Since we merged identical schedules, the new schedule starts and finishes at the same
+				// time as the original, just with double the amount
+				let sched_1 = VestingInfo {
+					locked: sched_0.locked * 2,
+					per_block: sched_0.per_block * 2,
+					starting_block: 10, // starts at the block the schedules are merged
+				};
+				// The two schedules have been merged so they now only have 1
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
+				assert_eq!(Vesting::vesting(&2).unwrap()[0], sched_1);
+
+				/* Merging two schedules that have started will vest both before merging */
+				let sched_2 = VestingInfo {
+					locked: sched_1.locked,
+					per_block: sched_1.per_block,
+					starting_block:  sched_1.starting_block + 1,
+				};
+				Vesting::vested_transfer(Some(4).into(), 2, sched_2).unwrap();
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 2);
+				assert_eq!(Vesting::vesting(&2).unwrap()[1], sched_2);
+				// Got to block 20 where both schedules are actively vesting
+				let cur_block = 20;
+				System::set_block_number(cur_block);
+				// user2 has no usable balances prior to the merge because they have not vested yet
+				assert_eq!(Balances::usable_balance(&2), 0);
+				Vesting::merge_schedules(Some(2).into(), 0, 1).unwrap();
+				// Merging schedules vests all pre-existing schedules prior to merging, which is reflected
+				// in user2's updated usable balance
+				let sched_1_vested_now = sched_1.per_block * (cur_block - sched_1.starting_block);
+				let sched_2_vested_now = sched_2.per_block * (cur_block - sched_2.starting_block);
+				assert_eq!(Balances::usable_balance(&2), sched_1_vested_now + sched_2_vested_now);
+
+				// The locked amount is the sum of schedules locked minus the amount that each schedule
+				// has vested up until the current block.
+				let sched_3 =
+					sched_2.locked_at::<Identity>(cur_block)
+					.saturating_add(sched_1.locked_at::<Identity>(cur_block));
+				// End block of the new schedule is the greater of either schedule
+				let merged_block_20_end = sched_2.end_block::<Identity>();
+				let merged_block_20_remaining_blocks = merged_block_20_end - cur_block;
+				let merged_per_block = sched_3 / merged_block_20_remaining_blocks;
+				let user2_schedule_block_20 = VestingInfo {
+					starting_block: cur_block,
+					locked: sched_3,
+					per_block: merged_per_block,
+				};
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
+				assert_eq!(Vesting::vesting(&2).unwrap()[0], user2_schedule_block_20);
+
+
+
+
+				/* Genesis config with multiple schedules for a user */
+
+
+			})
+	}
+
+	#[test]
+	fn merge_schedules_that_are_over_works() {
+		ExtBuilder::default()
+			.existential_deposit(256)
+			.build()
+			.execute_with(|| {
+
+			})
+		/* If one finishes by the current block we still create a new schedule */
+
+		/* If both schedules finish by the current block we don't create new one*/
+	}
+
+	#[test]
+	fn merge_schedules_that_start_in_the_future_works() {
+		/* New schedule will start at the max possible starting block*/
+
+		/* Merge two vesting schedules that both start at some point in the future */
+
+		/* Merge vesting schedules where 1 starts at some point in the future */
+	}
+
+	#[test]
+	fn merge_schedules_throws_proper_errors() {
+		/* Schedule index out of bounds */
+
+	}
+
+	#[test]
+	fn generates_multiple_schedules_from_genesis_config() {
+		/* Panics if too many schedules are specified */
+		/* Succesfuly creates multiple schedules */
 	}
 }
