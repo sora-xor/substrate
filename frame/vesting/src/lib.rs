@@ -97,6 +97,14 @@ impl<
 			Zero::zero()
 		}
 	}
+
+	/// Block number of when this schedule ends
+	pub fn end_block<
+		BlockNumberToBalance: Convert<BlockNumber, Balance>
+	>(&self) -> Balance {
+		let starting_block = BlockNumberToBalance::convert(self.starting_block);
+		starting_block + (self.locked / self.per_block)
+	}
 }
 
 #[frame_support::pallet]
@@ -340,51 +348,72 @@ pub mod pallet {
 		) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 
-			if schedule_index1 == schedule_index2 {
-				// Exit early if the indexes are the same. For efficiency sake, we don't bother
-				// checking if they are valid
-				return Ok(())
-			}
-
-			let schedules = Self::vesting(&who);
-			ensure!(schedules.is_some(), Error::<T>::NotEnoughSchedules);
-
-			let schedules: BoundedVec<
-				VestingInfo<BalanceOf<T>,
-				T::BlockNumber>, T::MaxVestingSchedules
-			> = schedules.unwrap();
+			// Vest according to existing schedules. Note: Downstream logic here assumes `who`
+			// has vested up through the current block.
+			let schedules = Self::vesting(&who).ok_or(Error::<T>::NotVesting)?;
 			let len = schedules.len();
 			ensure!(len >= 2, Error::<T>::NotEnoughSchedules);
 
 			let schedule_index1 = schedule_index1 as usize;
 			let schedule_index2 = schedule_index2 as usize;
 			ensure!(schedule_index1 < len && schedule_index2 < len, Error::<T>::ScheduleIndexOutOfBounds);
-
+			// The schedule index is based off of the schedule ordering prior to filtering out any
+			// schedules that may have completed at this block.
 			let schedule1 = schedules[schedule_index1];
 			let schedule2 = schedules[schedule_index2];
-			// TODO should we vest both schedules before merging?
-			let merged_schedule = VestingInfo {
-				locked: schedule1.locked.saturating_add(schedule2.locked),
-				starting_block: schedule1.starting_block.max(schedule2.starting_block),
-				per_block: schedule1.per_block.min(schedule2.per_block)
-			};
-			// Remove the schedules that we are merging
-			let mut schedules: Vec<VestingInfo<BalanceOf<T>, T::BlockNumber>>  = schedules
+
+			let now = <frame_system::Pallet<T>>::block_number();
+			let mut total_locked_now: BalanceOf<T> = Zero::zero();
+			// Filter out the schedules that have completed and the schedules the user whishes to merge.
+			// Additionally, we track the total locked so we can update the users locks. Note: we
+			// include the locked balance from the schedules that will get merged.
+			let mut schedules: Vec<VestingInfo<BalanceOf<T>, T::BlockNumber>> = schedules
 				.into_iter()
 				.enumerate()
-				.filter_map(|(i, schedule)|
-					if i == schedule_index1 || i == schedule_index2 {
+				.filter_map(| (i, schedule) | { // TODO use filter
+					let locked_now = schedule.locked_at::<T::BlockNumberToBalance>(now);
+					total_locked_now = total_locked_now.saturating_add(locked_now);
+					if locked_now.is_zero() || i == schedule_index1 || i == schedule_index2 {
 						None
 					} else {
 						Some(schedule)
 					}
-				)
+				})
 				.collect();
-			schedules.push(merged_schedule);
 
+			// Update the users vesting lock
+			if total_locked_now.is_zero() {
+				// There are not any schedules to merge once we account for vesting up through
+				// the current block.
+				T::Currency::remove_lock(VESTING_ID, &who);
+				Vesting::<T>::remove(&who);
+				Self::deposit_event(Event::<T>::VestingCompleted(who));
+				return Ok(())
+			}
+			let reasons = WithdrawReasons::TRANSFER | WithdrawReasons::RESERVE;
+			T::Currency::set_lock(VESTING_ID, &who, total_locked_now, reasons);
+			Self::deposit_event(Event::<T>::VestingUpdated(who.clone(), total_locked_now));
+
+			// Create the new merged schedule
+			let merged_locked = schedule1.locked_at::<T::BlockNumberToBalance>(now)
+				.saturating_add(schedule2.locked_at::<T::BlockNumberToBalance>(now));
+			let merged_end = schedule1.end_block::<T::BlockNumberToBalance>()
+				.max(schedule2.end_block::<T::BlockNumberToBalance>());
+			let merged_remaining_blocks = merged_end.saturating_sub(T::BlockNumberToBalance::convert(now));
+			let merged_per_block = merged_locked / merged_remaining_blocks;
+
+			let merged_schedule = VestingInfo {
+				locked: merged_locked,
+				starting_block: now,
+				per_block: merged_per_block,
+			};
+
+			// Add the new merged schedule to the user's schedules.
+			schedules.push(merged_schedule);
 			let schedules: BoundedVec<_, T::MaxVestingSchedules> = schedules.try_into()
 				.expect("`BoundedVec` is created from another `BoundedVec` with same bound; q.e.d.");
 			Vesting::<T>::insert(&who, schedules);
+
 			Ok(())
 		}
 	}
@@ -422,7 +451,7 @@ impl<T: Config> Pallet<T> {
 		let mut total_locked_now: BalanceOf<T> = Zero::zero();
 		let still_vesting: Vec<VestingInfo<BalanceOf<T>, T::BlockNumber>> = vesting
 			.into_iter()
-			.filter_map(| schedule | {
+			.filter_map(| schedule | { // TODO can just be a filter
 				let locked_now = schedule.locked_at::<T::BlockNumberToBalance>(now);
 				if locked_now.is_zero() {
 					None
@@ -501,7 +530,11 @@ impl<T: Config> VestingSchedule<T::AccountId> for Pallet<T> where
 	}
 
 	/// Remove a vesting schedule for a given account.
-	fn remove_vesting_schedule(who: &T::AccountId) {
+	fn remove_vesting_schedule(who: &T::AccountId) { // TODO needs to remove by index
+		// read in vec
+		// check bounds
+		// remove() index
+		// write vec back
 		Vesting::<T>::remove(who);
 		// it can't fail, but even if somehow it did, we don't really care.
 		let res = Self::update_lock_and_prune_schedules(who.clone());
@@ -1037,6 +1070,40 @@ mod tests {
 			.existential_deposit(256)
 			.build()
 			.execute_with(|| {
+				let user2_free_balance = Balances::free_balance(&2);
+				let user4_free_balance = Balances::free_balance(&4);
+				assert_eq!(user2_free_balance, 256 * 20);
+				assert_eq!(user4_free_balance, 256 * 40);
+				// Account 2 should already have a vesting schedule.
+				let user2_vesting_schedule = VestingInfo {
+					locked: 256 * 20,
+					per_block: 256, // Vesting over 20 blocks
+					starting_block: 10,
+				};
+				assert_eq!(Vesting::vesting(&2).unwrap()[0], user2_vesting_schedule);
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
+
+				/* Merging two identical schedules results in a schedule at the same end block */
+				// Add a schedule that is identical to the one that already exists
+				Vesting::vested_transfer(Some(4).into(), 2, user2_vesting_schedule).unwrap();
+				assert_eq!(Vesting::vesting(&2).unwrap()[1], user2_vesting_schedule);
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 2);
+				// Go forward 10 blocks, so half of both schedules have vested
+				System::set_block_number(10);
+				Vesting::merge_schedules(Some(4).into(), 0, 1).unwrap();
+
+				/* Vesting schedule that finishes by the current block */
+
+				/* Both vesting schedules finish by the current block */
+
+				/* Schedule index out of bounds */
+
+				/* Vesting schedule where both start before the current block and end after the current block */
+
+				/* Vesting schedule where both start _after_ the current block */
+
+				/* Will vest according to pre-existing schedules prior to creating merged schedule */
+
 
 			})
 	}
