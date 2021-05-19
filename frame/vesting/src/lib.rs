@@ -394,12 +394,12 @@ pub mod pallet {
 			T::Currency::set_lock(VESTING_ID, &who, total_locked_now, reasons);
 			Self::deposit_event(Event::<T>::VestingUpdated(who.clone(), total_locked_now));
 
-			let merged_schedule = Self::merge_vesting_info(now, schedule1, schedule2);
-			// TODO merged schedule created event? Arguable can be calculated off chain unless we are
-			// worried about arithmetic replication
+			if let Some(merged_schedule) = Self::merge_vesting_info(now, schedule1, schedule2) {
+				// TODO Event if a merged schedule is created
+				// Add the new merged schedule to the user's schedules.
+				schedules.push(merged_schedule);
+			}
 
-			// Add the new merged schedule to the user's schedules.
-			schedules.push(merged_schedule);
 			let schedules: BoundedVec<_, T::MaxVestingSchedules> = schedules.try_into()
 				.expect("`BoundedVec` is created from another `BoundedVec` with same bound; q.e.d.");
 			Vesting::<T>::insert(&who, schedules);
@@ -416,18 +416,26 @@ impl<T: Config> Pallet<T> {
 		now: T::BlockNumber,
 		schedule1: VestingInfo<BalanceOf<T>, T::BlockNumber>,
 		schedule2: VestingInfo<BalanceOf<T>, T::BlockNumber>,
-	) -> VestingInfo<BalanceOf<T>, T::BlockNumber> {
-		let locked = schedule1.locked_at::<T::BlockNumberToBalance>(now)
-			.saturating_add(schedule2.locked_at::<T::BlockNumberToBalance>(now));
-		let ending_block = schedule1.end_block::<T::BlockNumberToBalance>()
-			.max(schedule2.end_block::<T::BlockNumberToBalance>());
+	) -> Option<VestingInfo<BalanceOf<T>, T::BlockNumber>> {
+		let schedule1_end_block = schedule1.end_block::<T::BlockNumberToBalance>();
+		let schedule2_end_block = schedule2.end_block::<T::BlockNumberToBalance>();
+		let now_as_balance = T::BlockNumberToBalance::convert(now);
+		if schedule1_end_block <= now_as_balance || schedule2_end_block <= now_as_balance {
+			// If either schedule has ended, we don't merge
+			return None;
+		};
+
+		let ending_block = schedule1_end_block.max(schedule2_end_block);
 		let starting_block = now
 			.max(schedule1.starting_block)
 			.max(schedule2.starting_block);
-		let remaining_blocks = ending_block.saturating_sub(T::BlockNumberToBalance::convert(starting_block));
+		let remaining_blocks = ending_block
+			.saturating_sub(T::BlockNumberToBalance::convert(starting_block));
+		let locked = schedule1.locked_at::<T::BlockNumberToBalance>(now)
+			.saturating_add(schedule2.locked_at::<T::BlockNumberToBalance>(now));
 		let per_block = locked / remaining_blocks;
 
-		VestingInfo { locked, starting_block, per_block }
+		Some(VestingInfo { locked, starting_block, per_block })
 	}
 
 	// Execute a vested transfer from `source` to `target` with the given `schedule`.
@@ -679,7 +687,7 @@ mod tests {
 	}
 
 	#[test]
-	fn check_vesting_status() {
+	fn check_vesting_status() { // TODO update to reflect multiple schedules
 		ExtBuilder::default()
 			.existential_deposit(256)
 			.build()
@@ -1035,9 +1043,6 @@ mod tests {
 					per_block: 64, // Vesting over 20 blocks
 					starting_block: 10,
 				};
-				// User 4 has a balance to transfer
-				let user4_free_balance = Balances::free_balance(&4);
-				assert_eq!(user4_free_balance, 256 * 40);
 
 				assert_eq!(Vesting::vesting(&3), None);
 				for _ in 0..<Test as Config>::MaxVestingSchedules::get() {
@@ -1058,9 +1063,6 @@ mod tests {
 					per_block: 64, // Vesting over 20 blocks
 					starting_block: 10,
 				};
-				// User 4 has a balance to transfer
-				let user4_free_balance = Balances::free_balance(&4);
-				assert_eq!(user4_free_balance, 256 * 40);
 
 				assert_eq!(Vesting::vesting(&3), None);
 				for _ in 0..<Test as Config>::MaxVestingSchedules::get() {
@@ -1134,27 +1136,20 @@ mod tests {
 
 				// The locked amount is the sum of schedules locked minus the amount that each schedule
 				// has vested up until the current block.
-				let sched_3 =
+				let sched_3_locked =
 					sched_2.locked_at::<Identity>(cur_block)
 					.saturating_add(sched_1.locked_at::<Identity>(cur_block));
 				// End block of the new schedule is the greater of either schedule
-				let merged_block_20_end = sched_2.end_block::<Identity>();
-				let merged_block_20_remaining_blocks = merged_block_20_end - cur_block;
-				let merged_per_block = sched_3 / merged_block_20_remaining_blocks;
-				let user2_schedule_block_20 = VestingInfo {
+				let sched_3_end = sched_2.end_block::<Identity>();
+				let sched_3_remaining_blocks = sched_3_end - cur_block;
+				let sched_3_per_block = sched_3_locked / sched_3_remaining_blocks;
+				let sched_3 = VestingInfo {
 					starting_block: cur_block,
-					locked: sched_3,
-					per_block: merged_per_block,
+					locked: sched_3_locked,
+					per_block: sched_3_per_block,
 				};
 				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
-				assert_eq!(Vesting::vesting(&2).unwrap()[0], user2_schedule_block_20);
-
-
-
-
-				/* Genesis config with multiple schedules for a user */
-
-
+				assert_eq!(Vesting::vesting(&2).unwrap()[0], sched_3);
 			})
 	}
 
