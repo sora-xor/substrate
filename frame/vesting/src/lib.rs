@@ -394,19 +394,9 @@ pub mod pallet {
 			T::Currency::set_lock(VESTING_ID, &who, total_locked_now, reasons);
 			Self::deposit_event(Event::<T>::VestingUpdated(who.clone(), total_locked_now));
 
-			// Create the new merged schedule
-			let merged_locked = schedule1.locked_at::<T::BlockNumberToBalance>(now)
-				.saturating_add(schedule2.locked_at::<T::BlockNumberToBalance>(now));
-			let merged_end = schedule1.end_block::<T::BlockNumberToBalance>()
-				.max(schedule2.end_block::<T::BlockNumberToBalance>());
-			let merged_remaining_blocks = merged_end.saturating_sub(T::BlockNumberToBalance::convert(now));
-			let merged_per_block = merged_locked / merged_remaining_blocks;
-
-			let merged_schedule = VestingInfo {
-				locked: merged_locked,
-				starting_block: now,
-				per_block: merged_per_block,
-			};
+			let merged_schedule = Self::merge_vesting_info(now, schedule1, schedule2);
+			// TODO merged schedule created event? Arguable can be calculated off chain unless we are
+			// worried about arithmetic replication
 
 			// Add the new merged schedule to the user's schedules.
 			schedules.push(merged_schedule);
@@ -420,6 +410,26 @@ pub mod pallet {
 }
 
 impl<T: Config> Pallet<T> {
+	// Create a new `VestingInfo`, based off of two other `VestingInfo`s.
+	// Note: We assume both schedules have been vested up through the current block.
+	fn merge_vesting_info(
+		now: T::BlockNumber,
+		schedule1: VestingInfo<BalanceOf<T>, T::BlockNumber>,
+		schedule2: VestingInfo<BalanceOf<T>, T::BlockNumber>,
+	) -> VestingInfo<BalanceOf<T>, T::BlockNumber> {
+		let locked = schedule1.locked_at::<T::BlockNumberToBalance>(now)
+			.saturating_add(schedule2.locked_at::<T::BlockNumberToBalance>(now));
+		let ending_block = schedule1.end_block::<T::BlockNumberToBalance>()
+			.max(schedule2.end_block::<T::BlockNumberToBalance>());
+		let starting_block = now
+			.max(schedule1.starting_block)
+			.max(schedule2.starting_block);
+		let remaining_blocks = ending_block.saturating_sub(T::BlockNumberToBalance::convert(starting_block));
+		let per_block = locked / remaining_blocks;
+
+		VestingInfo { locked, starting_block, per_block }
+	}
+
 	// Execute a vested transfer from `source` to `target` with the given `schedule`.
 	fn do_vested_transfer(
 		source: <T::Lookup as StaticLookup>::Source,
@@ -483,6 +493,8 @@ impl<T: Config> VestingSchedule<T::AccountId> for Pallet<T> where
 {
 	type Moment = T::BlockNumber;
 	type Currency = T::Currency;
+
+	// TODO should we expose merge vesting schedules here?
 
 	/// Get the amount that is currently being vested and cannot be transferred out of this account.
 	fn vesting_balance(who: &T::AccountId) -> Option<BalanceOf<T>> {
@@ -1065,46 +1077,118 @@ mod tests {
 	}
 
 	#[test]
-	fn merge_schedules_works() {
+	fn merge_schedules_basics_works() {
 		ExtBuilder::default()
 			.existential_deposit(256)
 			.build()
 			.execute_with(|| {
-				let user2_free_balance = Balances::free_balance(&2);
-				let user4_free_balance = Balances::free_balance(&4);
-				assert_eq!(user2_free_balance, 256 * 20);
-				assert_eq!(user4_free_balance, 256 * 40);
 				// Account 2 should already have a vesting schedule.
-				let user2_vesting_schedule = VestingInfo {
+				let sched_0 = VestingInfo {
 					locked: 256 * 20,
 					per_block: 256, // Vesting over 20 blocks
 					starting_block: 10,
 				};
-				assert_eq!(Vesting::vesting(&2).unwrap()[0], user2_vesting_schedule);
+				assert_eq!(Vesting::vesting(&2).unwrap()[0], sched_0);
 				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
 
 				/* Merging two identical schedules results in a schedule at the same end block */
 				// Add a schedule that is identical to the one that already exists
-				Vesting::vested_transfer(Some(4).into(), 2, user2_vesting_schedule).unwrap();
-				assert_eq!(Vesting::vesting(&2).unwrap()[1], user2_vesting_schedule);
+				Vesting::vested_transfer(Some(3).into(), 2, sched_0).unwrap();
+				assert_eq!(Vesting::vesting(&2).unwrap()[1], sched_0);
 				assert_eq!(Vesting::vesting(&2).unwrap().len(), 2);
-				// Go forward 10 blocks, so half of both schedules have vested
-				System::set_block_number(10);
-				Vesting::merge_schedules(Some(4).into(), 0, 1).unwrap();
+				// Go to block 10 where the schedules start
+				let cur_block = 10;
+				System::set_block_number(cur_block);
+				Vesting::merge_schedules(Some(2).into(), 0, 1).unwrap();
+				// Since we merged identical schedules, the new schedule starts and finishes at the same
+				// time as the original, just with double the amount
+				let sched_1 = VestingInfo {
+					locked: sched_0.locked * 2,
+					per_block: sched_0.per_block * 2,
+					starting_block: 10, // starts at the block the schedules are merged
+				};
+				// The two schedules have been merged so they now only have 1
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
+				assert_eq!(Vesting::vesting(&2).unwrap()[0], sched_1);
 
-				/* Vesting schedule that finishes by the current block */
+				/* Merging two schedules that have started will vest both before merging */
+				let sched_2 = VestingInfo {
+					locked: sched_1.locked,
+					per_block: sched_1.per_block,
+					starting_block:  sched_1.starting_block + 1,
+				};
+				Vesting::vested_transfer(Some(4).into(), 2, sched_2).unwrap();
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 2);
+				assert_eq!(Vesting::vesting(&2).unwrap()[1], sched_2);
+				// Got to block 20 where both schedules are actively vesting
+				let cur_block = 20;
+				System::set_block_number(cur_block);
+				// user2 has no usable balances prior to the merge because they have not vested yet
+				assert_eq!(Balances::usable_balance(&2), 0);
+				Vesting::merge_schedules(Some(2).into(), 0, 1).unwrap();
+				// Merging schedules vests all pre-existing schedules prior to merging, which is reflected
+				// in user2's updated usable balance
+				let sched_1_vested_now = sched_1.per_block * (cur_block - sched_1.starting_block);
+				let sched_2_vested_now = sched_2.per_block * (cur_block - sched_2.starting_block);
+				assert_eq!(Balances::usable_balance(&2), sched_1_vested_now + sched_2_vested_now);
 
-				/* Both vesting schedules finish by the current block */
+				// The locked amount is the sum of schedules locked minus the amount that each schedule
+				// has vested up until the current block.
+				let sched_3 =
+					sched_2.locked_at::<Identity>(cur_block)
+					.saturating_add(sched_1.locked_at::<Identity>(cur_block));
+				// End block of the new schedule is the greater of either schedule
+				let merged_block_20_end = sched_2.end_block::<Identity>();
+				let merged_block_20_remaining_blocks = merged_block_20_end - cur_block;
+				let merged_per_block = sched_3 / merged_block_20_remaining_blocks;
+				let user2_schedule_block_20 = VestingInfo {
+					starting_block: cur_block,
+					locked: sched_3,
+					per_block: merged_per_block,
+				};
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
+				assert_eq!(Vesting::vesting(&2).unwrap()[0], user2_schedule_block_20);
 
-				/* Schedule index out of bounds */
 
-				/* Vesting schedule where both start before the current block and end after the current block */
 
-				/* Vesting schedule where both start _after_ the current block */
 
-				/* Will vest according to pre-existing schedules prior to creating merged schedule */
+				/* Genesis config with multiple schedules for a user */
 
 
 			})
+	}
+
+	#[test]
+	fn merge_schedules_that_are_over_works() {
+		ExtBuilder::default()
+			.existential_deposit(256)
+			.build()
+			.execute_with(|| {
+
+			})
+		/* If one finishes by the current block we still create a new schedule */
+
+		/* If both schedules finish by the current block we don't create new one*/
+	}
+
+	#[test]
+	fn merge_schedules_that_start_in_the_future_works() {
+		/* New schedule will start at the max possible starting block*/
+
+		/* Merge two vesting schedules that both start at some point in the future */
+
+		/* Merge vesting schedules where 1 starts at some point in the future */
+	}
+
+	#[test]
+	fn merge_schedules_throws_proper_errors() {
+		/* Schedule index out of bounds */
+
+	}
+
+	#[test]
+	fn generates_multiple_schedules_from_genesis_config() {
+		/* Panics if too many schedules are specified */
+		/* Succesfuly creates multiple schedules */
 	}
 }
