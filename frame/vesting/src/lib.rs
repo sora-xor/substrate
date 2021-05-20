@@ -50,7 +50,7 @@ pub mod weights;
 use sp_std::{prelude::*, fmt::Debug, convert::TryInto};
 use codec::{Encode, Decode};
 use sp_runtime::{RuntimeDebug, traits::{
-	StaticLookup, Zero, AtLeast32BitUnsigned, MaybeSerializeDeserialize, Convert, Saturating
+	StaticLookup, Zero, AtLeast32BitUnsigned, MaybeSerializeDeserialize, Convert, Saturating, CheckedDiv
 }};
 use frame_support::{ensure, pallet_prelude::*};
 use frame_support::traits::{
@@ -345,6 +345,9 @@ pub mod pallet {
 		/// Merge two vesting schedules together, creating a new vesting schedule that vests over
 		/// the maximum of the original two schedules duration.
 		///
+		/// NOTE: this will vest all schedules through the current block prior to merging. However,
+		/// the schedule indexes are based off of the ordering prior to schedules being vested.
+		///
 		/// The dispatch origin for this call must be _Signed_.
 		///
 		/// - `schedule_index1`: TODO
@@ -364,8 +367,7 @@ pub mod pallet {
 		) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 
-			// Vest according to existing schedules. Note: Downstream logic here assumes `who`
-			// has vested up through the current block.
+			// Vest according to existing schedules.
 			let vesting = Self::vesting(&who).ok_or(Error::<T>::NotVesting)?;
 			let len = vesting.len();
 			ensure!(len >= 2, Error::<T>::NotEnoughSchedules);
@@ -411,11 +413,15 @@ impl<T: Config> Pallet<T> {
 			// If both schedule has ended, we don't merge
 			return None;
 		} else if schedule1_ending_block <= now_as_balance {
-			// If one schedule has ended, we treat the one that has not ended as the new "merged one"
+			// If one schedule has ended, we treat the one that has not ended as the new "merged schedule"
 			return Some(schedule2)
 		} else if schedule2_ending_block <= now_as_balance {
 			return Some(schedule1)
 		}
+		let locked = schedule1.locked_at::<T::BlockNumberToBalance>(now)
+			.saturating_add(schedule2.locked_at::<T::BlockNumberToBalance>(now));
+		// This shouldn't happen because we know at least one ending block is greater than now.
+		if locked.try_into().unwrap_or(u32::MAX).eq(&0) { return None; }
 
 		let ending_block = schedule1_ending_block.max(schedule2_ending_block);
 		let starting_block = now
@@ -423,9 +429,13 @@ impl<T: Config> Pallet<T> {
 			.max(schedule2.starting_block);
 		let remaining_blocks = ending_block
 			.saturating_sub(T::BlockNumberToBalance::convert(starting_block));
-		let locked = schedule1.locked_at::<T::BlockNumberToBalance>(now)
-			.saturating_add(schedule2.locked_at::<T::BlockNumberToBalance>(now));
-		let per_block = locked / remaining_blocks;
+		// This shouldn't have div 0 error because we know 1)
+		let maybe_per_block  = locked.checked_div(&remaining_blocks)?;
+		let per_block = if maybe_per_block.try_into().unwrap_or(u32::MAX).eq(&0) {
+			1u32.try_into().unwrap_or_else(|_| Default::default())
+		} else {
+			maybe_per_block
+		};
 
 		Some(VestingInfo { locked, starting_block, per_block })
 	}
@@ -1291,6 +1301,15 @@ mod tests {
 				Vesting::merge_schedules(Some(2).into(), 0, 1).unwrap();
 				assert_eq!(Balances::usable_balance(&2), sched_0_vested_now);
 				assert_eq!(Vesting::vesting(&2).unwrap(), vec![sched_2]);
+			});
+	}
+
+	fn merge_schedules_with_zero_values_does_not_create_new_schedules() {
+		ExtBuilder::default()
+			.existential_deposit(256)
+			.build()
+			.execute_with(|| {
+
 			});
 	}
 
