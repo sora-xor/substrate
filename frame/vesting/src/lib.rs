@@ -356,69 +356,40 @@ pub mod pallet {
 		///     - Reads: TODO
 		///     - Writes: TODO
 		/// # </weight>
-		#[pallet::weight(T::WeightInfo::force_vested_transfer(MaxLocksOf::<T>::get()))] // TODO
+		#[pallet::weight(123)] // TODO
 		pub fn merge_schedules(
 			origin: OriginFor<T>,
-			schedule_index1: u32,
-			schedule_index2: u32
+			schedule1_index: u32,
+			schedule2_index: u32
 		) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 
 			// Vest according to existing schedules. Note: Downstream logic here assumes `who`
 			// has vested up through the current block.
-			let schedules = Self::vesting(&who).ok_or(Error::<T>::NotVesting)?;
-			let len = schedules.len();
+			let vesting = Self::vesting(&who).ok_or(Error::<T>::NotVesting)?;
+			let len = vesting.len();
 			ensure!(len >= 2, Error::<T>::NotEnoughSchedules);
 
-			let schedule_index1 = schedule_index1 as usize;
-			let schedule_index2 = schedule_index2 as usize;
-			ensure!(schedule_index1 < len && schedule_index2 < len, Error::<T>::ScheduleIndexOutOfBounds);
+			let schedule1_index = schedule1_index as usize;
+			let schedule2_index = schedule2_index as usize;
+			ensure!(schedule1_index < len && schedule2_index < len, Error::<T>::ScheduleIndexOutOfBounds);
 			// The schedule index is based off of the schedule ordering prior to filtering out any
-			// schedules that may have completed at this block.
-			let schedule1 = schedules[schedule_index1];
-			let schedule2 = schedules[schedule_index2];
+			// schedules that may be ending at this block.
+			let schedule1 = vesting[schedule1_index];
+			let schedule2 = vesting[schedule2_index];
+			let filter = vec![schedule1_index, schedule2_index];
+			let maybe_vesting = Self::update_lock_and_schedules(who.clone(), vesting, filter);
 
 			let now = <frame_system::Pallet<T>>::block_number();
-			let mut total_locked_now: BalanceOf<T> = Zero::zero();
-			// Filter out the schedules that have completed and the schedules the user whishes to merge.
-			// Additionally, we track the total locked so we can update the users locks. Note: we
-			// include the locked balance from the schedules that will get merged.
-			let mut schedules: Vec<VestingInfo<BalanceOf<T>, T::BlockNumber>> = schedules
-				.into_iter()
-				.enumerate()
-				.filter_map(| (i, schedule) | { // TODO use filter
-					let locked_now = schedule.locked_at::<T::BlockNumberToBalance>(now);
-					total_locked_now = total_locked_now.saturating_add(locked_now);
-					if locked_now.is_zero() || i == schedule_index1 || i == schedule_index2 {
-						None
-					} else {
-						Some(schedule)
-					}
-				})
-				.collect();
-
-			// Update the users vesting lock
-			if total_locked_now.is_zero() {
-				// There are not any schedules to merge once we account for vesting up through
-				// the current block.
-				T::Currency::remove_lock(VESTING_ID, &who);
-				Vesting::<T>::remove(&who);
-				Self::deposit_event(Event::<T>::VestingCompleted(who));
-				return Ok(())
-			}
-			let reasons = WithdrawReasons::TRANSFER | WithdrawReasons::RESERVE;
-			T::Currency::set_lock(VESTING_ID, &who, total_locked_now, reasons);
-			Self::deposit_event(Event::<T>::VestingUpdated(who.clone(), total_locked_now));
-
 			if let Some(merged_schedule) = Self::merge_vesting_info(now, schedule1, schedule2) {
-				// TODO Event if a merged schedule is created
-				// Add the new merged schedule to the user's schedules.
-				schedules.push(merged_schedule);
+				let mut vesting = maybe_vesting.unwrap_or_default();
+				vesting.try_push(merged_schedule).expect("bounds already checked. q.e.d");
+				Vesting::<T>::insert(&who, vesting);
+			} else if maybe_vesting.is_some() {
+				Vesting::<T>::insert(&who, maybe_vesting.unwrap());
+			} else {
+				Vesting::<T>::remove(&who);
 			}
-
-			let schedules: BoundedVec<_, T::MaxVestingSchedules> = schedules.try_into()
-				.expect("`BoundedVec` is created from another `BoundedVec` with same bound; q.e.d.");
-			Vesting::<T>::insert(&who, schedules);
 
 			Ok(())
 		}
@@ -496,12 +467,12 @@ impl<T: Config> Pallet<T> {
 		let still_vesting: Vec<VestingInfo<BalanceOf<T>, T::BlockNumber>> = vesting
 			.into_iter()
 			.enumerate()
-			.filter_map(| (i, schedule) | {
+			.filter_map(| (i, schedule) | { // TODO user .filter()
 				let locked_now = schedule.locked_at::<T::BlockNumberToBalance>(now);
+				total_locked_now = total_locked_now.saturating_add(locked_now);
 				if locked_now.is_zero() || filter.contains(&i) {
 					None
 				} else {
-					total_locked_now = total_locked_now.saturating_add(locked_now);
 					Some(schedule)
 				}
 			})
@@ -569,8 +540,10 @@ impl<T: Config> VestingSchedule<T::AccountId> for Pallet<T> where
 			per_block,
 			starting_block
 		};
-		let mut vesting = if let Some(v) = Self::vesting(who) { v } else {
-			vec![].try_into().expect("empty vec always respects bounds. q.e.d.")
+		let mut vesting = if let Some(v) = Self::vesting(who) {
+			v
+		} else {
+			BoundedVec::default()
 		};
 		vesting.try_push(vesting_schedule).expect("vec bounds was already checked. q.e.d.");
 		if let Some(v) = Self::update_lock_and_schedules(who.clone(), vesting, vec![]) {
@@ -586,7 +559,9 @@ impl<T: Config> VestingSchedule<T::AccountId> for Pallet<T> where
 		let filter = if let Some(schedule_index) = schedule_index {
 			ensure!(schedule_index < T::MaxVestingSchedules::get(), Error::<T>::ScheduleIndexOutOfBounds);
 			vec![schedule_index as usize]
-		} else { vec![] };
+		} else {
+			vec![]
+		};
 		let vesting= Self::vesting(who).ok_or(Error::<T>::NotVesting)?;
 		if let Some(v) = Self::update_lock_and_schedules(who.clone(), vesting, filter) {
 			Vesting::<T>::insert(&who, v);
