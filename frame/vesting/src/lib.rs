@@ -1086,7 +1086,7 @@ mod tests {
 
 	#[test]
 	fn merge_schedules_basics_works() { // TODO this is too long/confusing - break up in multiple execution envs
-		/* Merging schedules that have not started works */
+		// Merging schedules that have not started works
 		ExtBuilder::default()
 			.existential_deposit(256)
 			.build()
@@ -1120,7 +1120,7 @@ mod tests {
 				assert_eq!(Balances::usable_balance(&2), 0);
 			});
 
-		/* Merging two schedules that have started will vest both before merging */
+		// Merging two schedules that have started will vest both before merging
 		ExtBuilder::default()
 			.existential_deposit(256)
 			.build()
@@ -1175,24 +1175,21 @@ mod tests {
 				assert_eq!(Vesting::vesting(&2).unwrap()[0], sched_2);
 			});
 
-		/* Schedules being merged are removed, other schedules shift left and the new schedule is last*/
+		// Schedules being merged are removed, other schedules shift left and the new schedule is last
 		ExtBuilder::default()
 			.existential_deposit(256)
 			.build()
-			.execute_with(|| { // TODO show schedule ordering changes
-				// Account 3 should already have a vesting schedule.
+			.execute_with(|| {
 				let sched_0 = VestingInfo {
 					locked: 256 * 10,
 					per_block: 256, // Vesting over 10 blocks
 					starting_block: 10,
 				};
-
 				let sched_1 = VestingInfo {
 					locked: 256 * 11,
 					per_block: 256, // Vesting over 11 blocks
 					starting_block: 11,
 				};
-
 				let sched_2 = VestingInfo {
 					locked: 256 * 12,
 					per_block: 256, // Vesting over 12 blocks
@@ -1202,6 +1199,9 @@ mod tests {
 				// Account 3 start out with no schedules
 				assert_eq!(Vesting::vesting(&3), None);
 
+				let cur_block = 1;
+				assert_eq!(System::block_number(), cur_block);
+
 				// Transfer the above 3 schedules to user account 3.
 				Vesting::vested_transfer(Some(4).into(), 3, sched_0).unwrap();
 				Vesting::vested_transfer(Some(4).into(), 3, sched_1).unwrap();
@@ -1210,25 +1210,35 @@ mod tests {
 				// With no schedules vested or merged they are in the order they are created
 				assert_eq!(Vesting::vesting(&3).unwrap(), vec![sched_0, sched_1, sched_2]);
 
+				// Create the merged schedule of sched_0 & sched_2
+				let sched_3_start = sched_1.starting_block
+					.max(sched_2.starting_block);
+				let sched_3_locked = sched_2.locked_at::<Identity>(cur_block)
+					.saturating_add(sched_0.locked_at::<Identity>(cur_block));
+				// End block of the new schedule is the greater of either schedule
+				let sched_3_end = sched_2.ending_block::<Identity>()
+					.max(sched_0.ending_block::<Identity>());
+				let sched_3_remaining_blocks = sched_3_end - sched_3_start;
+				let sched_3_per_block = sched_3_locked / sched_3_remaining_blocks;
+				let sched_3 = VestingInfo {
+					locked: sched_3_locked,
+					per_block: sched_3_per_block,
+					starting_block: sched_3_start,
+				};
+
+				// Merge sched_0 & sched_2
 				Vesting::merge_schedules(Some(3).into(), 0, 2).unwrap();
 				// 2 of the schedules are merged and 1 new one is created
 				assert_eq!(Vesting::vesting(&3).unwrap().len(), 2);
+				assert_eq!(Vesting::vesting(&3).unwrap(), vec![sched_1, sched_3])
 
-				let cur_block = 1;
-				let sched_3_locked =
-					sched_1.locked_at::<Identity>(1)
-					.saturating_add(sched_0.locked_at::<Identity>(1));
-				// End block of the new schedule is the greater of either schedule
-				let sched_3_end = sched_1.ending_block::<Identity>()
-					.max(sched_0.ending_block::<Identity>());
-				let sched_3_remaining_blocks = sched_3_end - 1;
-				let sched_3_per_block = sched_3_locked / sched_3_remaining_blocks;
+
 			})
 	}
 
 	#[test]
 	fn merge_schedules_that_are_over_works() {
-		/* If a schedule finishes by the block we treat the ongoing schedule as the merged one */
+		// If a schedule finishes by the block we treat the ongoing schedule as the merged one
 		ExtBuilder::default()
 			.existential_deposit(256)
 			.build()
@@ -1293,7 +1303,7 @@ mod tests {
 			});
 
 
-		/* If both schedules finish by the current block we don't create new one */
+		// If both schedules finish by the current block we don't create new one
 		ExtBuilder::default()
 			.existential_deposit(256)
 			.build()
