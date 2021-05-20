@@ -189,16 +189,7 @@ impl<T: Config> Pallet<T> {
 	/// Uses the offchain seed to generate a random number, maxed with
 	/// [`Config::MinerMaxIterations`].
 	pub fn get_balancing_iters() -> usize {
-		match T::MinerMaxIterations::get() {
-			0 => 0,
-			max @ _ => {
-				let seed = sp_io::offchain::random_seed();
-				let random = <u32>::decode(&mut TrailingZeroInput::new(seed.as_ref()))
-					.expect("input is padded with zeroes; qed")
-					% max.saturating_add(1);
-				random as usize
-			}
-		}
+		T::MinerMaxIterations::get() as usize
 	}
 
 	/// Greedily reduce the size of the a solution to fit into the block, w.r.t. weight.
