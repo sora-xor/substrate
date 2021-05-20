@@ -248,7 +248,14 @@ pub mod pallet {
 		)]
 		pub fn vest(origin: OriginFor<T>) -> DispatchResult {
 			let who = ensure_signed(origin)?;
-			Self::update_lock_and_prune_schedules(who)
+			let vesting = Self::vesting(&who).ok_or(Error::<T>::NotVesting)?;
+			let maybe_vesting = Self::update_lock_and_schedules(who.clone(), vesting, vec![]);
+			if let Some(vesting) = maybe_vesting {
+				Vesting::<T>::insert(&who, vesting);
+			} else {
+				Vesting::<T>::remove(&who);
+			}
+			Ok(())
 		}
 
 		/// Unlock any vested funds of a `target` account.
@@ -271,7 +278,15 @@ pub mod pallet {
 		)]
 		pub fn vest_other(origin: OriginFor<T>, target: <T::Lookup as StaticLookup>::Source) -> DispatchResult {
 			ensure_signed(origin)?;
-			Self::update_lock_and_prune_schedules(T::Lookup::lookup(target)?)
+			let who = T::Lookup::lookup(target)?;
+			let vesting = Self::vesting(&who).ok_or(Error::<T>::NotVesting)?;
+			let maybe_vesting = Self::update_lock_and_schedules(who.clone(), vesting, vec![]);
+			if let Some(vesting) = maybe_vesting {
+				Vesting::<T>::insert(&who, vesting);
+			} else {
+				Vesting::<T>::remove(&who);
+			}
+			Ok(())
 		}
 
 		/// Create a vested transfer.
@@ -468,16 +483,22 @@ impl<T: Config> Pallet<T> {
 
 	/// (Re)set or remove the pallet's currency lock on `who`'s account in accordance with their
 	/// current unvested amount and prune any vesting schedules that have completed.
-	fn update_lock_and_prune_schedules(who: T::AccountId) -> DispatchResult {
-		let vesting = Self::vesting(&who).ok_or(Error::<T>::NotVesting)?;
+	///
+	/// NOTE: This will update the users lock, but will not read/write the `Vesting` storage item.
+	fn update_lock_and_schedules(
+		who: T::AccountId,
+		vesting: BoundedVec<VestingInfo<BalanceOf<T>, T::BlockNumber>, T::MaxVestingSchedules>,
+		filter: Vec<usize>,
+	) -> Option<BoundedVec<VestingInfo<BalanceOf<T>, T::BlockNumber>, T::MaxVestingSchedules>> {
 		let now = <frame_system::Pallet<T>>::block_number();
 
 		let mut total_locked_now: BalanceOf<T> = Zero::zero();
 		let still_vesting: Vec<VestingInfo<BalanceOf<T>, T::BlockNumber>> = vesting
 			.into_iter()
-			.filter_map(| schedule | { // TODO can just be a filter
+			.enumerate()
+			.filter_map(| (i, schedule) | {
 				let locked_now = schedule.locked_at::<T::BlockNumberToBalance>(now);
-				if locked_now.is_zero() {
+				if locked_now.is_zero() || filter.contains(&i) {
 					None
 				} else {
 					total_locked_now = total_locked_now.saturating_add(locked_now);
@@ -490,15 +511,15 @@ impl<T: Config> Pallet<T> {
 			T::Currency::remove_lock(VESTING_ID, &who);
 			Vesting::<T>::remove(&who);
 			Self::deposit_event(Event::<T>::VestingCompleted(who));
+			None
 		} else {
-			let still_vesting: BoundedVec<_, T::MaxVestingSchedules> = still_vesting.try_into()
-				.expect("`BoundedVec` is created from another `BoundedVec` with same bound; q.e.d.");
-			Vesting::<T>::insert(&who, still_vesting);
 			let reasons = WithdrawReasons::TRANSFER | WithdrawReasons::RESERVE;
 			T::Currency::set_lock(VESTING_ID, &who, total_locked_now, reasons);
 			Self::deposit_event(Event::<T>::VestingUpdated(who, total_locked_now));
+			let still_vesting: BoundedVec<_, T::MaxVestingSchedules> = still_vesting.try_into()
+				.expect("`BoundedVec` is created from another `BoundedVec` with same bound; q.e.d.");
+			Some(still_vesting)
 		}
-		Ok(())
 	}
 }
 
@@ -525,8 +546,8 @@ impl<T: Config> VestingSchedule<T::AccountId> for Pallet<T> where
 
 	/// Adds a vesting schedule to a given account.
 	///
-	/// If there already exists a vesting schedule for the given account, an `Err` is returned
-	/// and nothing is updated.
+	/// If there already `MaxVestingSchedules`, an `Err` is returned and nothing
+	/// is updated.
 	///
 	/// On success, a linearly reducing amount of funds will be locked. In order to realise any
 	/// reduction of the lock over time as it diminishes, the account owner must use `vest` or
@@ -548,23 +569,31 @@ impl<T: Config> VestingSchedule<T::AccountId> for Pallet<T> where
 			per_block,
 			starting_block
 		};
-		Vesting::<T>::try_append(who, vesting_schedule).expect("BoundedVec bounds checked prior to write.");
-		// it can't fail, but even if somehow it did, we don't really care.
-		let res = Self::update_lock_and_prune_schedules(who.clone());
-		debug_assert!(res.is_ok());
+		let mut vesting = if let Some(v) = Self::vesting(who) { v } else {
+			vec![].try_into().expect("empty vec always respects bounds. q.e.d.")
+		};
+		vesting.try_push(vesting_schedule).expect("vec bounds was already checked. q.e.d.");
+		if let Some(v) = Self::update_lock_and_schedules(who.clone(), vesting, vec![]) {
+			Vesting::<T>::insert(&who, v);
+		} else {
+			Vesting::<T>::remove(&who);
+		}
 		Ok(())
 	}
 
 	/// Remove a vesting schedule for a given account.
-	fn remove_vesting_schedule(who: &T::AccountId) { // TODO needs to remove by index
-		// read in vec
-		// check bounds
-		// remove() index
-		// write vec back
-		Vesting::<T>::remove(who);
-		// it can't fail, but even if somehow it did, we don't really care.
-		let res = Self::update_lock_and_prune_schedules(who.clone());
-		debug_assert!(res.is_ok());
+	fn remove_vesting_schedule(who: &T::AccountId, schedule_index: Option<u32>) -> DispatchResult {
+		let filter = if let Some(schedule_index) = schedule_index {
+			ensure!(schedule_index < T::MaxVestingSchedules::get(), Error::<T>::ScheduleIndexOutOfBounds);
+			vec![schedule_index as usize]
+		} else { vec![] };
+		let vesting= Self::vesting(who).ok_or(Error::<T>::NotVesting)?;
+		if let Some(v) = Self::update_lock_and_schedules(who.clone(), vesting, filter) {
+			Vesting::<T>::insert(&who, v);
+		} else {
+			Vesting::<T>::remove(&who);
+		};
+		Ok(())
 	}
 }
 
@@ -1085,7 +1114,7 @@ mod tests {
 	}
 
 	#[test]
-	fn merge_schedules_basics_works() { // TODO this is too long/confusing - break up in multiple execution envs
+	fn merge_schedules_basics_works() {
 		// Merging schedules that have not started works
 		ExtBuilder::default()
 			.existential_deposit(256)
@@ -1124,7 +1153,7 @@ mod tests {
 		ExtBuilder::default()
 			.existential_deposit(256)
 			.build()
-			.execute_with(|| { // TODO show schedule ordering changes
+			.execute_with(|| {
 				// Account 2 should already have a vesting schedule.
 				let sched_0 = VestingInfo {
 					locked: 256 * 20,
@@ -1158,8 +1187,7 @@ mod tests {
 				assert_eq!(Balances::usable_balance(&2), sched_0_vested_now + sched_1_vested_now);
 				// The locked amount is the sum of schedules locked minus the amount that each schedule
 				// has vested up until the current block.
-				let sched_2_locked =
-					sched_1.locked_at::<Identity>(cur_block)
+				let sched_2_locked = sched_1.locked_at::<Identity>(cur_block)
 					.saturating_add(sched_0.locked_at::<Identity>(cur_block));
 				// End block of the new schedule is the greater of either schedule
 				let sched_2_end = sched_1.ending_block::<Identity>()
@@ -1230,10 +1258,65 @@ mod tests {
 				Vesting::merge_schedules(Some(3).into(), 0, 2).unwrap();
 				// 2 of the schedules are merged and 1 new one is created
 				assert_eq!(Vesting::vesting(&3).unwrap().len(), 2);
+				// The not touched schedule moves left and the new merged schedule is appended
 				assert_eq!(Vesting::vesting(&3).unwrap(), vec![sched_1, sched_3])
+			});
+
+		// Merging an ongoing schedule and one that has not started yet works
+		ExtBuilder::default()
+			.existential_deposit(256)
+			.build()
+			.execute_with(|| {
+				// Account 2 should already have a vesting schedule.
+				let sched_0 = VestingInfo {
+					locked: 256 * 20,
+					per_block: 256, // Vesting over 20 blocks
+					starting_block: 10,
+				};
+				assert_eq!(Vesting::vesting(&2).unwrap()[0], sched_0);
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
+
+				// Fast forward to half way through the life of sched_1
+				let mut cur_block = sched_0.starting_block + sched_0.ending_block::<Identity>() / 2;
+				System::set_block_number(cur_block);
+				assert_eq!(Balances::usable_balance(&2), 0);
+				// We are also testing the behavior of when vest has been called on one of the
+				// schedules prior to merging.
+				Vesting::vest(Some(2).into()).unwrap();
+				let mut sched_0_vested_now = (cur_block - sched_0.starting_block) * sched_0.per_block;
+				assert_eq!(Balances::usable_balance(&2), sched_0_vested_now);
 
 
-			})
+				// Go forward a block
+				cur_block += 1;
+				System::set_block_number(cur_block);
+				sched_0_vested_now += sched_0.per_block;
+				// And add a schedule that starts after this block, but before sched_0 finishes.
+				let sched_1 = VestingInfo {
+					locked: 256 * 10,
+					per_block: 1, // Vesting over 256 * 10 blocks
+					starting_block: cur_block + 1,
+				};
+				Vesting::vested_transfer(Some(4).into(), 2, sched_1).unwrap();
+
+				// Merge the schedules before sched_1 starts
+				let sched_2_start = sched_1.starting_block;
+				let sched_2_locked = sched_0.locked_at::<Identity>(cur_block)
+					.saturating_add(sched_1.locked_at::<Identity>(cur_block));
+				// End block of the new schedule is the greater of either schedule
+				let sched_2_end = sched_0.ending_block::<Identity>()
+					.max(sched_1.ending_block::<Identity>());
+				let sched_2_remaining_blocks = sched_2_end - sched_2_start;
+				let sched_2_per_block = sched_2_locked / sched_2_remaining_blocks;
+				let sched_2 = VestingInfo {
+					locked: sched_2_locked,
+					per_block: sched_2_per_block,
+					starting_block: sched_2_start,
+				};
+				Vesting::merge_schedules(Some(2).into(), 0, 1).unwrap();
+				assert_eq!(Balances::usable_balance(&2), sched_0_vested_now);
+				assert_eq!(Vesting::vesting(&2).unwrap(), vec![sched_2]);
+			});
 	}
 
 	#[test]
@@ -1345,15 +1428,6 @@ mod tests {
 					* (sched_1.ending_block::<Identity>() - sched_1.starting_block);
 				assert_eq!(Balances::usable_balance(&2), sched_0_vested_now + sched_1_vested_now);
 			});
-	}
-
-	#[test]
-	fn merge_schedules_that_start_in_the_future_works() {
-		/* New schedule will start at the max possible starting block*/
-
-		/* Merge two vesting schedules that both start at some point in the future */
-
-		/* Merge vesting schedules where 1 starts at some point in the future */
 	}
 
 	#[test]
