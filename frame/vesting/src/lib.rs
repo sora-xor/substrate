@@ -104,14 +104,14 @@ mod vesting_info {
 			ensure!(!locked.is_zero() && !per_block.is_zero(), Error::<T>::InvalidScheduleParams);
 			let min_transfer: u32 = T::MinVestedTransfer::get().try_into().unwrap_or(u32::MAX);
 			let min_transfer = Balance::from(min_transfer);
-			// TODO - Do we want to enforce this here? This would keep from merging where sum of 
+			// TODO - Do we want to enforce this here? This would keep from merging where sum of
 			// schedules is not is below MinVestedTransfer
 			ensure!(locked >= min_transfer, Error::<T>::AmountLow);
 			Ok(())
 		}
 
 		/// Only to be used for testing.
-		pub(crate) fn no_validation_new(
+		pub(super) fn unsafe_new(
 			locked: Balance,
 			per_block: Balance,
 			starting_block: BlockNumber,
@@ -996,7 +996,7 @@ mod tests {
 				);
 
 				// Fails due to too low transfer amount.
-				let new_vesting_schedule_too_low = VestingInfo::no_validation_new(
+				let new_vesting_schedule_too_low = VestingInfo::unsafe_new(
 					<Test as Config>::MinVestedTransfer::get() - 1,
 					64,
 					10,
@@ -1093,7 +1093,7 @@ mod tests {
 				);
 
 				// Fails due to too low transfer amount.
-				let new_vesting_schedule_too_low = VestingInfo::no_validation_new(
+				let new_vesting_schedule_too_low = VestingInfo::unsafe_new(
 					<Test as Config>::MinVestedTransfer::get() - 1,
 					64,
 					10,
