@@ -92,6 +92,7 @@ mod vesting_info {
 			starting_block: BlockNumber
 		) -> Result<VestingInfo<Balance, BlockNumber>, Error::<T>> {
 			Self::validate_params(locked, per_block, starting_block)?;
+			let per_block = if per_block > locked { locked } else { per_block };
 			Ok(VestingInfo { locked, per_block, starting_block })
 		}
 
@@ -105,7 +106,7 @@ mod vesting_info {
 			let min_transfer: u32 = T::MinVestedTransfer::get().try_into().unwrap_or(u32::MAX);
 			let min_transfer = Balance::from(min_transfer);
 			// TODO - Do we want to enforce this here? This would keep from merging where sum of
-			// schedules is not is below MinVestedTransfer
+			// schedules is below MinVestedTransfer
 			ensure!(locked >= min_transfer, Error::<T>::AmountLow);
 			Ok(())
 		}
@@ -157,9 +158,20 @@ mod vesting_info {
 			BlockNumberToBalance: Convert<BlockNumber, Balance>
 		>(&self) -> Balance {
 			let starting_block = BlockNumberToBalance::convert(self.starting_block);
-			let remaining_blocks = self.locked.checked_div(&self.per_block)
-				.unwrap_or(Zero::zero());
-			starting_block + remaining_blocks
+			let duration = if self.per_block > self.locked {
+				// If `per_block` is bigger than `locked`, the schedule will end
+				// the block after starting
+				1u32.into()
+			} else if self.per_block.is_zero() {
+				// Check for div by 0 errors, which should only be from legacy
+				// vesting schedules since new ones are validated for this.
+				self.locked
+			} else {
+				let has_remainder = !(self.locked % self.per_block).is_zero();
+				let maybe_duration = self.locked / self.per_block;
+				if has_remainder { maybe_duration + 1u32.into() } else { maybe_duration }
+			};
+			starting_block.saturating_add(duration)
 		}
 	}
 }
@@ -495,11 +507,14 @@ impl<T: Config> Pallet<T> {
 			.max(schedule2.starting_block());
 		let duration = ending_block
 			.saturating_sub(T::BlockNumberToBalance::convert(starting_block));
+		// TODO make sure to try and get to each of these in test cases
 		let per_block = if duration.is_zero() {
 			locked
-		 } else {
+		} else if duration > locked {
+			1u32.into()
+		} else {
 			locked.checked_div(&duration)?
-		 };
+		};
 
 		// At this point inputs have been validated, so this should always be `Some`
 		VestingInfo::try_new::<T>(locked, per_block, starting_block).ok()
@@ -1547,17 +1562,17 @@ mod tests {
 	#[test]
 	fn vesting_info_validation_works() {
 		let min_transfer = <Test as Config>::MinVestedTransfer::get();
-		// `locked` is too low (but not 0)
+		// `locked` cannot be less than min_transfer (non 0 case)
 		match  VestingInfo::try_new::<Test>(min_transfer - 1,	1u64, 10u64) {
 			Err(Error::<Test>::AmountLow) => (),
 			_ => panic!()
 		}
-		// `locked` is 0
+		// `locked` cannot be 0
 		match  VestingInfo::try_new::<Test>(0,	1u64, 10u64) {
 			Err(Error::<Test>::InvalidScheduleParams) => (),
 			_ => panic!()
 		}
-		// `per_block` is 0
+		// `per_block` cannot be 0
 		match  VestingInfo::try_new::<Test>(min_transfer + 1,	0u64, 10u64) {
 			Err(Error::<Test>::InvalidScheduleParams) => (),
 			_ => panic!()
@@ -1569,9 +1584,54 @@ mod tests {
 			ok_sched.unwrap(),
 			VestingInfo::unsafe_new(min_transfer, 1u64, 10u64)
 		);
+		// `per_block` is never bigger than `locked`
+		assert_eq!(
+			VestingInfo::try_new::<Test>(256u64, 256 * 2u64, 10u64).unwrap(),
+			VestingInfo::try_new::<Test>(256u64, 256u64, 10u64).unwrap()
+		);
 	}
 
-		#[test]
+	#[test]
+	fn merge_vesting_info_handles_duration_edge_cases() {
+		// let x = Vesting::merge_vesting_info(now, schedule1, schedule2);
+		// assert_eq!(x, y)
+	}
+
+	#[test]
+	fn vesting_info_ending_block_works() {
+		// Treats `per_block` 0 as a `per_block` of 1
+		let per_block_0 = VestingInfo::unsafe_new(256u32, 0u32, 10u32);
+		let per_block_1 = VestingInfo::try_new::<Test>(256u32, 1u32, 10u32)
+			.unwrap();
+		assert_eq!(per_block_0.ending_block::<Identity>(), per_block_0.locked() + per_block_0.starting_block());
+		assert_eq!(per_block_0.ending_block::<Identity>(), per_block_1.ending_block::<Identity>());
+
+		// `per_block >= locked` always results in a schedule ending the block after it starts
+		let per_block_gt_locked = VestingInfo::unsafe_new(256u32, 256 * 2u32, 10u32);
+		let per_block_eq_locked =  VestingInfo::try_new::<Test>(256u32, 256u32, 10u32)
+			.unwrap();
+		assert_eq!(
+			per_block_gt_locked.ending_block::<Identity>(),
+			1 + per_block_gt_locked.starting_block()
+		);
+		assert_eq!(
+			per_block_gt_locked.ending_block::<Identity>(),
+			per_block_eq_locked.ending_block::<Identity>()
+		);
+
+		// Correctly calcs end if `locked % per_block != 0`
+		let imperfect_per_block = VestingInfo::try_new::<Test>(256u32, 250u32, 10u32).unwrap();
+		assert_eq!(
+			imperfect_per_block.ending_block::<Identity>(),
+			imperfect_per_block.starting_block() + 2u32,
+		);
+		assert_eq!(
+			imperfect_per_block.locked_at::<Identity>(imperfect_per_block.ending_block::<Identity>()),
+			0
+		);
+	}
+
+	#[test]
 	fn schedule_with_zero_duration() {
 		// per_block > locked
 
