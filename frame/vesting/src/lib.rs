@@ -110,8 +110,9 @@ mod vesting_info {
 			Ok(())
 		}
 
-		/// Only to be used for testing.
-		pub(super) fn unsafe_new(
+		/// Instantiate a new `VestingInfo` without param validation. Useful for
+		/// mocking bad inputs in testing.
+		pub fn unsafe_new(
 			locked: Balance,
 			per_block: Balance,
 			starting_block: BlockNumber,
@@ -156,7 +157,9 @@ mod vesting_info {
 			BlockNumberToBalance: Convert<BlockNumber, Balance>
 		>(&self) -> Balance {
 			let starting_block = BlockNumberToBalance::convert(self.starting_block);
-			starting_block + (self.locked / self.per_block)
+			let remaining_blocks = self.locked.checked_div(&self.per_block)
+				.unwrap_or(Zero::zero());
+			starting_block + remaining_blocks
 		}
 	}
 }
@@ -250,15 +253,19 @@ pub mod pallet {
 
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
-	#[pallet::metadata(T::AccountId = "AccountId", BalanceOf<T> = "Balance")]
+	#[pallet::metadata(
+		T::AccountId = "AccountId", BalanceOf<T> = "Balance", T::BlockNumber = "BlockNumber"
+	)]
 	pub enum Event<T: Config> {
 		/// The amount vested has been updated. This could indicate more funds are available. The
 		/// balance given is the amount which is left unvested (and thus locked).
 		/// \[account, unvested\]
-		VestingUpdated(T::AccountId, BalanceOf<T>), // TODO add the number of vesting schedules
+		VestingUpdated(T::AccountId, BalanceOf<T>),
 		/// An \[account\] has become fully vested. No further vesting can happen.
-		VestingCompleted(T::AccountId), // TODO add the number of vesting schedules
-		// TODO add event for merged schedules
+		VestingCompleted(T::AccountId),
+		/// 2 vesting schedules where successfully merged together.
+		///\[locked, per_block, starting_block\]
+		VestingMergeSuccess(BalanceOf<T>, BalanceOf<T>, T::BlockNumber),
 	}
 
 	/// Error for the vesting pallet.
@@ -271,8 +278,6 @@ pub mod pallet {
 		AtMaxVestingSchedules,
 		/// Amount being transferred is too low to create a vesting schedule.
 		AmountLow,
-		/// There are not at least 2 schedules to merge.
-		NotEnoughSchedules,
 		/// At least one of the indexes is out of bounds of the vesting schedules.
 		ScheduleIndexOutOfBounds,
 		/// Failed to create a new schedule because the parameters where invalid. i.e. `per_block` or
@@ -403,10 +408,12 @@ pub mod pallet {
 		/// NOTE: this will vest all schedules through the current block prior to merging. However,
 		/// the schedule indexes are based off of the ordering prior to schedules being vested.
 		///
+		/// NOTE: If `schedule1_index == schedule2_index` this is a no-op.
+		///
 		/// The dispatch origin for this call must be _Signed_.
 		///
-		/// - `schedule_index1`: TODO
-		/// - `schedule_index2`: TODO
+		/// - `schedule1_index`: TODO
+		/// - `schedule2_index`: TODO
 		///
 		/// # <weight>
 		/// - `O(1)`.
@@ -420,27 +427,31 @@ pub mod pallet {
 			schedule1_index: u32,
 			schedule2_index: u32
 		) -> DispatchResult {
+			if schedule1_index == schedule2_index { return Ok(()) };
 			let who = ensure_signed(origin)?;
-
-			// Vest according to existing schedules.
-			let vesting = Self::vesting(&who).ok_or(Error::<T>::NotVesting)?;
-			let len = vesting.len();
-			ensure!(len >= 2, Error::<T>::NotEnoughSchedules);
-
 			let schedule1_index = schedule1_index as usize;
 			let schedule2_index = schedule2_index as usize;
+			let vesting = Self::vesting(&who).ok_or(Error::<T>::NotVesting)?;
+			let len = vesting.len();
 			ensure!(schedule1_index < len && schedule2_index < len, Error::<T>::ScheduleIndexOutOfBounds);
+
 			// The schedule index is based off of the schedule ordering prior to filtering out any
 			// schedules that may be ending at this block.
 			let schedule1 = vesting[schedule1_index];
 			let schedule2 = vesting[schedule2_index];
 			let filter = vec![schedule1_index, schedule2_index];
+			// The length of vesting decreases by 2 here since we filter out 2 schedules. So we know
+			// below we have the space to insert the merged schedule.
 			let maybe_vesting = Self::update_lock_and_schedules(who.clone(), vesting, filter);
 
 			let now = <frame_system::Pallet<T>>::block_number();
-			if let Some(merged_schedule) = Self::merge_vesting_info(now, schedule1, schedule2) {
+			if let Some(s) = Self::merge_vesting_info(now, schedule1, schedule2) {
 				let mut vesting = maybe_vesting.unwrap_or_default();
-				vesting.try_push(merged_schedule).expect("bounds already checked. q.e.d");
+				// It shouldn't be possible for this to fail because we removed 2 schedules above.
+				ensure!(vesting.try_push(s).is_ok(), Error::<T>::AtMaxVestingSchedules);
+				Self::deposit_event(
+					Event::<T>::VestingMergeSuccess(s.locked(), s.per_block(), s.starting_block())
+				);
 				Vesting::<T>::insert(&who, vesting);
 			} else if maybe_vesting.is_some() {
 				Vesting::<T>::insert(&who, maybe_vesting.unwrap());
@@ -482,15 +493,13 @@ impl<T: Config> Pallet<T> {
 		let starting_block = now
 			.max(schedule1.starting_block())
 			.max(schedule2.starting_block());
-		let remaining_blocks = ending_block
+		let duration = ending_block
 			.saturating_sub(T::BlockNumberToBalance::convert(starting_block));
-		// This shouldn't have div 0 error because we know 1)
-		let maybe_per_block  = locked.checked_div(&remaining_blocks)?;
-		let per_block = if maybe_per_block.is_zero() {
-			BalanceOf::<T>::from(1u32)
-		} else {
-			maybe_per_block
-		};
+		let per_block = if duration.is_zero() {
+			locked
+		 } else {
+			locked.checked_div(&duration)?
+		 };
 
 		// At this point inputs have been validated, so this should always be `Some`
 		VestingInfo::try_new::<T>(locked, per_block, starting_block).ok()
@@ -502,8 +511,6 @@ impl<T: Config> Pallet<T> {
 		target: <T::Lookup as StaticLookup>::Source,
 		schedule: VestingInfo<BalanceOf<T>, T::BlockNumber>
 	) -> DispatchResult {
-		// Remove the below check if it happens in validate params
-		// ensure!(schedule.locked() >= T::MinVestedTransfer::get(), Error::<T>::AmountLow);
 		VestingInfo::validate_params::<T>(
 			schedule.locked(), schedule.per_block(), schedule.starting_block()
 		)?;
@@ -519,7 +526,7 @@ impl<T: Config> Pallet<T> {
 		// We can't let this fail because the currency transfer has already happened
 		Self::add_vesting_schedule(
 			&target, schedule.locked(), schedule.per_block(), schedule.starting_block()
-		).expect("schedule inputs and vec bounds verified");
+		).expect("schedule inputs and vec bounds validated. q.e.");
 
 		Ok(())
 	}
@@ -536,10 +543,10 @@ impl<T: Config> Pallet<T> {
 		let now = <frame_system::Pallet<T>>::block_number();
 
 		let mut total_locked_now: BalanceOf<T> = Zero::zero();
-		let still_vesting: Vec<VestingInfo<BalanceOf<T>, T::BlockNumber>> = vesting
+		let still_vesting  = vesting
 			.into_iter()
 			.enumerate()
-			.filter_map(| (i, schedule) | { // TODO user .filter()
+			.filter_map(| (i, schedule) | {
 				let locked_now = schedule.locked_at::<T::BlockNumberToBalance>(now);
 				total_locked_now = total_locked_now.saturating_add(locked_now);
 				if locked_now.is_zero() || filter.contains(&i) {
@@ -548,7 +555,9 @@ impl<T: Config> Pallet<T> {
 					Some(schedule)
 				}
 			})
-			.collect();
+			.collect::<Vec<_>>()
+			.try_into()
+			.expect("`BoundedVec` is created from another `BoundedVec` with same bound; q.e.d.");
 
 		if total_locked_now.is_zero() {
 			T::Currency::remove_lock(VESTING_ID, &who);
@@ -559,8 +568,6 @@ impl<T: Config> Pallet<T> {
 			let reasons = WithdrawReasons::TRANSFER | WithdrawReasons::RESERVE;
 			T::Currency::set_lock(VESTING_ID, &who, total_locked_now, reasons);
 			Self::deposit_event(Event::<T>::VestingUpdated(who, total_locked_now));
-			let still_vesting: BoundedVec<_, T::MaxVestingSchedules> = still_vesting.try_into()
-				.expect("`BoundedVec` is created from another `BoundedVec` with same bound; q.e.d.");
 			Some(still_vesting)
 		}
 	}
@@ -1361,6 +1368,7 @@ mod tests {
 			});
 	}
 
+	#[test]
 	fn merge_schedules_with_zero_values_does_not_create_new_schedules() {
 		ExtBuilder::default()
 			.existential_deposit(256)
@@ -1481,10 +1489,52 @@ mod tests {
 			});
 	}
 
+
 	#[test]
 	fn merge_schedules_throws_proper_errors() {
 		/* Schedule index out of bounds */
+		ExtBuilder::default()
+			.existential_deposit(256)
+			.build()
+			.execute_with(|| {
+				let max_schedules = <Test as Config>::MaxVestingSchedules::get();
+				// Account 2 should already have a vesting schedule.
+				let sched_0 =  VestingInfo::try_new::<Test>(
+					256 * 20,
+					256, // Vesting over 20 blocks
+					10,
+				).unwrap();
 
+				// Not enough vesting schedules
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
+				assert_noop!(
+					Vesting::merge_schedules(Some(2).into(), 0, 1),
+					Error::<Test>::ScheduleIndexOutOfBounds
+				);
+
+				// Enough schedules to merge but an index is non-existent
+				Vesting::vested_transfer(Some(3).into(), 2, sched_0).unwrap();
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 2);
+				assert_noop!(
+					Vesting::merge_schedules(Some(2).into(), 0, 2),
+					Error::<Test>::ScheduleIndexOutOfBounds
+				);
+
+				// Index >= max allowed schedules
+				Vesting::vested_transfer(Some(4).into(), 2, sched_0).unwrap();
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), max_schedules as usize);
+				assert_noop!(
+					Vesting::merge_schedules(Some(2).into(), 0, max_schedules),
+					Error::<Test>::ScheduleIndexOutOfBounds
+				);
+
+				// Noop with no errors if indexes are the same
+				let cur_scheds = Vesting::vesting(&2);
+				assert_ok!(Vesting::merge_schedules(Some(2).into(), 0, 0)); // TODO better way to assert noop?
+				assert_eq!(Vesting::vesting(&2), cur_scheds)
+
+
+			});
 	}
 
 	#[test]
@@ -1492,4 +1542,45 @@ mod tests {
 		/* Panics if too many schedules are specified */
 		/* Succesfuly creates multiple schedules */
 	}
+
+
+	#[test]
+	fn vesting_info_validation_works() {
+		let min_transfer = <Test as Config>::MinVestedTransfer::get();
+		// `locked` is too low (but not 0)
+		match  VestingInfo::try_new::<Test>(min_transfer - 1,	1u64, 10u64) {
+			Err(Error::<Test>::AmountLow) => (),
+			_ => panic!()
+		}
+		// `locked` is 0
+		match  VestingInfo::try_new::<Test>(0,	1u64, 10u64) {
+			Err(Error::<Test>::InvalidScheduleParams) => (),
+			_ => panic!()
+		}
+		// `per_block` is 0
+		match  VestingInfo::try_new::<Test>(min_transfer + 1,	0u64, 10u64) {
+			Err(Error::<Test>::InvalidScheduleParams) => (),
+			_ => panic!()
+		}
+		// Valid inputs
+		let ok_sched = VestingInfo::try_new::<Test>(min_transfer,	1u64, 10u64);
+		assert!(ok_sched.is_ok());
+		assert_eq!(
+			ok_sched.unwrap(),
+			VestingInfo::unsafe_new(min_transfer, 1u64, 10u64)
+		);
+	}
+
+		#[test]
+	fn schedule_with_zero_duration() {
+		// per_block > locked
+
+		// merge where both schedules start and end on same block in the future
+	}
+
+	#[test]
+	fn vest_info_ending_block_works() {
+
+	}
+
 }
