@@ -22,10 +22,10 @@
 
 mod middleware;
 
-use std::io;
 use jsonrpc_core::{IoHandlerExtension, MetaIoHandler};
 use log::error;
 use pubsub::PubSubMetadata;
+use std::io;
 
 /// Maximal payload accepted by RPC servers.
 pub const MAX_PAYLOAD: usize = 15 * 1024 * 1024;
@@ -37,7 +37,7 @@ const WS_MAX_CONNECTIONS: usize = 100;
 pub type RpcHandler<T> = pubsub::PubSubHandler<T, RpcMiddleware>;
 
 pub use self::inner::*;
-pub use middleware::{RpcMiddleware, RpcMetrics};
+pub use middleware::{RpcMetrics, RpcMiddleware};
 
 /// Construct rpc `IoHandler`
 pub fn rpc_handler<M: PubSubMetadata>(
@@ -55,10 +55,12 @@ pub fn rpc_handler<M: PubSubMetadata>(
 		let methods = serde_json::to_value(&methods)
 			.expect("Serialization of Vec<String> is infallible; qed");
 
-		move |_| Ok(serde_json::json!({
-			"version": 1,
-			"methods": methods.clone(),
-		}))
+		move |_| {
+			jsonrpc_core::futures::future::ready(Ok(serde_json::json!({
+				"version": 1,
+				"methods": methods.clone(),
+			})))
+		}
 	});
 	io
 }
@@ -116,32 +118,43 @@ mod inner {
 	/// Start WS server listening on given address.
 	///
 	/// **Note**: Only available if `not(target_os = "unknown")`.
-	pub fn start_ws<M: pubsub::PubSubMetadata + From<jsonrpc_core::futures::sync::mpsc::Sender<String>>> (
+	pub fn start_ws<
+		M: pubsub::PubSubMetadata
+			+ From<jsonrpc_core::futures::channel::mpsc::UnboundedSender<String>>,
+	>(
 		addr: &std::net::SocketAddr,
 		max_connections: Option<usize>,
 		cors: Option<&Vec<String>>,
 		io: RpcHandler<M>,
 	) -> io::Result<ws::Server> {
-		ws::ServerBuilder::with_meta_extractor(io, |context: &ws::RequestContext| context.sender().into())
-			.max_payload(MAX_PAYLOAD)
-			.max_connections(max_connections.unwrap_or(WS_MAX_CONNECTIONS))
-			.allowed_origins(map_cors(cors))
-			.allowed_hosts(hosts_filtering(cors.is_some()))
-			.start(addr)
-			.map_err(|err| match err {
-				ws::Error::Io(io) => io,
-				ws::Error::ConnectionClosed => io::ErrorKind::BrokenPipe.into(),
-				e => {
-					error!("{}", e);
-					io::ErrorKind::Other.into()
-				}
-			})
+		ws::ServerBuilder::with_meta_extractor(io, |context: &ws::RequestContext| {
+			context.sender().into()
+		})
+		.max_payload(MAX_PAYLOAD)
+		.max_connections(max_connections.unwrap_or(WS_MAX_CONNECTIONS))
+		.allowed_origins(map_cors(cors))
+		.allowed_hosts(hosts_filtering(cors.is_some()))
+		.start(addr)
+		.map_err(|err| match err {
+			ws::Error::Io(io) => io,
+			ws::Error::ConnectionClosed => io::ErrorKind::BrokenPipe.into(),
+			e => {
+				error!("{}", e);
+				io::ErrorKind::Other.into()
+			}
+		})
 	}
 
 	fn map_cors<T: for<'a> From<&'a str>>(
-		cors: Option<&Vec<String>>
+		cors: Option<&Vec<String>>,
 	) -> http::DomainsValidation<T> {
-		cors.map(|x| x.iter().map(AsRef::as_ref).map(Into::into).collect::<Vec<_>>()).into()
+		cors.map(|x| {
+			x.iter()
+				.map(AsRef::as_ref)
+				.map(Into::into)
+				.collect::<Vec<_>>()
+		})
+		.into()
 	}
 
 	fn hosts_filtering(enable: bool) -> http::DomainsValidation<http::Host> {
@@ -157,5 +170,4 @@ mod inner {
 }
 
 #[cfg(target_os = "unknown")]
-mod inner {
-}
+mod inner {}
