@@ -18,6 +18,7 @@
 
 //! Error helpers for Chain RPC module.
 
+use std::pin::Pin;
 use crate::errors;
 use jsonrpc_core as rpc;
 
@@ -25,7 +26,7 @@ use jsonrpc_core as rpc;
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Chain RPC future Result type.
-pub type FutureResult<T> = Box<dyn rpc::futures::Future<Item = T, Error = Error> + Send>;
+pub type FutureResult<T> = Pin<Box<dyn rpc::futures::Future<Output = Result<T>> + Send>>;
 
 /// Chain RPC errors.
 #[derive(Debug, derive_more::Display, derive_more::From)]

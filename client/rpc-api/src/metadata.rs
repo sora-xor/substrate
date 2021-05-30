@@ -19,7 +19,7 @@
 //! RPC Metadata
 use std::sync::Arc;
 
-use jsonrpc_core::futures::sync::mpsc;
+use jsonrpc_core::futures::channel::mpsc;
 use jsonrpc_pubsub::{Session, PubSubMetadata};
 
 /// RPC Metadata.
@@ -41,7 +41,7 @@ impl PubSubMetadata for Metadata {
 
 impl Metadata {
 	/// Create new `Metadata` with session (Pub/Sub) support.
-	pub fn new(transport: mpsc::Sender<String>) -> Self {
+	pub fn new(transport: mpsc::UnboundedSender<String>) -> Self {
 		Metadata {
 			session: Some(Arc::new(Session::new(transport))),
 		}
@@ -55,8 +55,8 @@ impl Metadata {
 	}
 }
 
-impl From<mpsc::Sender<String>> for Metadata {
-	fn from(sender: mpsc::Sender<String>) -> Self {
+impl From<mpsc::UnboundedSender<String>> for Metadata {
+	fn from(sender: mpsc::UnboundedSender<String>) -> Self {
 		Self::new(sender)
 	}
 }

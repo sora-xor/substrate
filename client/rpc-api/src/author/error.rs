@@ -18,6 +18,7 @@
 
 //! Authoring RPC module errors.
 
+use std::pin::Pin;
 use crate::errors;
 use jsonrpc_core as rpc;
 use sp_runtime::transaction_validity::InvalidTransaction;
@@ -26,7 +27,7 @@ use sp_runtime::transaction_validity::InvalidTransaction;
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Author RPC future Result type.
-pub type FutureResult<T> = Box<dyn rpc::futures::Future<Item = T, Error = Error> + Send>;
+pub type FutureResult<T> = Pin<Box<dyn rpc::futures::Future<Output = Result<T>> + Send>>;
 
 /// Author RPC errors.
 #[derive(Debug, derive_more::Display, derive_more::From)]
