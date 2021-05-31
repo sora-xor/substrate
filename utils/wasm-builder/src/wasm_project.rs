@@ -468,6 +468,14 @@ fn compact_wasm_file(
 		);
 		wasm_gc::garbage_collect_file(&wasm_file, &wasm_compact_file)
 			.expect("Failed to compact generated WASM binary.");
+
+		let mut module = binaryen::Module::read(&std::fs::read(&wasm_compact_file).expect("failed to read wasm file")).expect("failed to parse wasm file");
+		module.optimize(&binaryen::CodegenConfig {
+			shrink_level: 2,
+			optimization_level: 2,
+			debug_info: false
+		});
+		std::fs::write(&wasm_compact_file, &module.write()).expect("failed to write optimised binary");
 		Some(WasmBinary(wasm_compact_file))
 	} else {
 		None
