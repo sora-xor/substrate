@@ -20,9 +20,7 @@ use std::{borrow::Cow, process::Command};
 
 /// Generate the `cargo:` key output
 pub fn generate_cargo_keys() {
-	let output = Command::new("git")
-		.args(&["rev-parse", "--short", "HEAD"])
-		.output();
+	let output = Command::new("git").args(&["rev-parse", "--short", "HEAD"]).output();
 
 	let commit = match output {
 		Ok(o) if o.status.success() => {
@@ -39,10 +37,7 @@ pub fn generate_cargo_keys() {
 		}
 	};
 
-	println!(
-		"cargo:rustc-env=SUBSTRATE_CLI_IMPL_VERSION={}",
-		get_version(&commit)
-	)
+	println!("cargo:rustc-env=SUBSTRATE_CLI_IMPL_VERSION={}", get_version(&commit))
 }
 
 fn get_platform() -> String {

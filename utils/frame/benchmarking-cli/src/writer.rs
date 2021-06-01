@@ -197,40 +197,26 @@ fn get_benchmark_data(batch: &BenchmarkBatch, analysis_choice: &AnalysisChoice) 
 				});
 			}
 		});
-	reads
-		.slopes
-		.into_iter()
-		.zip(reads.names.iter())
-		.zip(extract_errors(&reads.model))
-		.for_each(|((slope, name), error)| {
+	reads.slopes.into_iter().zip(reads.names.iter()).zip(extract_errors(&reads.model)).for_each(
+		|((slope, name), error)| {
 			if !slope.is_zero() {
 				if !used_components.contains(&name) {
 					used_components.push(name);
 				}
-				used_reads.push(ComponentSlope {
-					name: name.clone(),
-					slope,
-					error,
-				});
+				used_reads.push(ComponentSlope { name: name.clone(), slope, error });
 			}
-		});
-	writes
-		.slopes
-		.into_iter()
-		.zip(writes.names.iter())
-		.zip(extract_errors(&writes.model))
-		.for_each(|((slope, name), error)| {
+		},
+	);
+	writes.slopes.into_iter().zip(writes.names.iter()).zip(extract_errors(&writes.model)).for_each(
+		|((slope, name), error)| {
 			if !slope.is_zero() {
 				if !used_components.contains(&name) {
 					used_components.push(name);
 				}
-				used_writes.push(ComponentSlope {
-					name: name.clone(),
-					slope,
-					error,
-				});
+				used_writes.push(ComponentSlope { name: name.clone(), slope, error });
 			}
-		});
+		},
+	);
 
 	// This puts a marker on any component which is entirely unused in the weight formula.
 	let components = batch.results[0]
@@ -239,10 +225,7 @@ fn get_benchmark_data(batch: &BenchmarkBatch, analysis_choice: &AnalysisChoice) 
 		.map(|(name, _)| -> Component {
 			let name_string = name.to_string();
 			let is_used = used_components.contains(&&name_string);
-			Component {
-				name: name_string,
-				is_used,
-			}
+			Component { name: name_string, is_used }
 		})
 		.collect::<Vec<_>>();
 
@@ -286,11 +269,8 @@ pub fn write_results(
 	let args = std::env::args().collect::<Vec<String>>();
 
 	// Which analysis function should be used when outputting benchmarks
-	let analysis_choice: AnalysisChoice = cmd
-		.output_analysis
-		.clone()
-		.try_into()
-		.map_err(|e| io_error(e))?;
+	let analysis_choice: AnalysisChoice =
+		cmd.output_analysis.clone().try_into().map_err(|e| io_error(e))?;
 
 	// Capture individual args
 	let cmd_data = CmdData {
@@ -319,10 +299,7 @@ pub fn write_results(
 		// If a user only specified a directory...
 		if file_path.is_dir() {
 			// Check if there might be multiple instances benchmarked.
-			if all_results
-				.keys()
-				.any(|(p, i)| p == pallet && i != instance)
-			{
+			if all_results.keys().any(|(p, i)| p == pallet && i != instance) {
 				// Create new file: "path/to/pallet_name_instance_name.rs".
 				file_path.push(pallet.clone() + "_" + &instance.to_snake_case());
 			} else {
@@ -405,13 +382,7 @@ impl handlebars::HelperDef for JoinHelper {
 		let param = h.param(0).unwrap();
 		let value = param.value();
 		let joined = if value.is_array() {
-			value
-				.as_array()
-				.unwrap()
-				.iter()
-				.map(|v| v.render())
-				.collect::<Vec<String>>()
-				.join(" ")
+			value.as_array().unwrap().iter().map(|v| v.render()).collect::<Vec<String>>().join(" ")
 		} else {
 			value.render()
 		};
@@ -441,7 +412,7 @@ mod test {
 		slope: u32,
 	) -> BenchmarkBatch {
 		let mut results = Vec::new();
-		for i in 0..5 {
+		for i in 0 .. 5 {
 			results.push(BenchmarkResults {
 				components: vec![(param, i), (BenchmarkParameter::z, 0)],
 				extrinsic_time: (base + slope * i).into(),
@@ -466,44 +437,26 @@ mod test {
 		assert_eq!(
 			benchmark.components,
 			vec![
-				Component {
-					name: component.to_string(),
-					is_used: true
-				},
-				Component {
-					name: "z".to_string(),
-					is_used: false
-				},
+				Component { name: component.to_string(), is_used: true },
+				Component { name: "z".to_string(), is_used: false },
 			],
 		);
 		// Weights multiplied by 1,000
 		assert_eq!(benchmark.base_weight, base * 1_000);
 		assert_eq!(
 			benchmark.component_weight,
-			vec![ComponentSlope {
-				name: component.to_string(),
-				slope: slope * 1_000,
-				error: 0,
-			}]
+			vec![ComponentSlope { name: component.to_string(), slope: slope * 1_000, error: 0 }]
 		);
 		// DB Reads/Writes are untouched
 		assert_eq!(benchmark.base_reads, base);
 		assert_eq!(
 			benchmark.component_reads,
-			vec![ComponentSlope {
-				name: component.to_string(),
-				slope,
-				error: 0,
-			}]
+			vec![ComponentSlope { name: component.to_string(), slope, error: 0 }]
 		);
 		assert_eq!(benchmark.base_writes, base);
 		assert_eq!(
 			benchmark.component_writes,
-			vec![ComponentSlope {
-				name: component.to_string(),
-				slope,
-				error: 0,
-			}]
+			vec![ComponentSlope { name: component.to_string(), slope, error: 0 }]
 		);
 	}
 
@@ -519,21 +472,18 @@ mod test {
 		)
 		.unwrap();
 
-		let first_benchmark = &mapped_results
-			.get(&("first_pallet".to_string(), "instance".to_string()))
-			.unwrap()[0];
+		let first_benchmark =
+			&mapped_results.get(&("first_pallet".to_string(), "instance".to_string())).unwrap()[0];
 		assert_eq!(first_benchmark.name, "first_benchmark");
 		check_data(first_benchmark, "a", 10, 3);
 
-		let second_benchmark = &mapped_results
-			.get(&("first_pallet".to_string(), "instance".to_string()))
-			.unwrap()[1];
+		let second_benchmark =
+			&mapped_results.get(&("first_pallet".to_string(), "instance".to_string())).unwrap()[1];
 		assert_eq!(second_benchmark.name, "second_benchmark");
 		check_data(second_benchmark, "b", 9, 2);
 
-		let second_pallet_benchmark = &mapped_results
-			.get(&("second_pallet".to_string(), "instance".to_string()))
-			.unwrap()[0];
+		let second_pallet_benchmark =
+			&mapped_results.get(&("second_pallet".to_string(), "instance".to_string())).unwrap()[0];
 		assert_eq!(second_pallet_benchmark.name, "first_benchmark");
 		check_data(second_pallet_benchmark, "c", 3, 4);
 	}

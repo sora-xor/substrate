@@ -105,8 +105,7 @@ impl WasmBuilder {
 	///
 	/// This adds `-Clink-arg=--export=__heap_base` to `RUST_FLAGS`.
 	pub fn export_heap_base(mut self) -> Self {
-		self.rust_flags
-			.push("-Clink-arg=--export=__heap_base".into());
+		self.rust_flags.push("-Clink-arg=--export=__heap_base".into());
 		self
 	}
 
@@ -147,11 +146,8 @@ impl WasmBuilder {
 	/// Build the WASM binary.
 	pub fn build(self) {
 		let out_dir = PathBuf::from(env::var("OUT_DIR").expect("`OUT_DIR` is set by cargo!"));
-		let file_path = out_dir.join(
-			self.file_name
-				.clone()
-				.unwrap_or_else(|| "wasm_binary.rs".into()),
-		);
+		let file_path =
+			out_dir.join(self.file_name.clone().unwrap_or_else(|| "wasm_binary.rs".into()));
 
 		if check_skip_build() {
 			// If we skip the build, we still want to make sure to be called when an env variable
@@ -166,10 +162,7 @@ impl WasmBuilder {
 		build_project(
 			file_path,
 			self.project_cargo_toml,
-			self.rust_flags
-				.into_iter()
-				.map(|f| format!("{} ", f))
-				.collect(),
+			self.rust_flags.into_iter().map(|f| format!("{} ", f)).collect(),
 			self.features_to_enable,
 			self.file_name,
 		);
@@ -184,10 +177,7 @@ impl WasmBuilder {
 fn generate_crate_skip_build_env_name() -> String {
 	format!(
 		"SKIP_{}_WASM_BUILD",
-		env::var("CARGO_PKG_NAME")
-			.expect("Package name is set")
-			.to_uppercase()
-			.replace('-', "_"),
+		env::var("CARGO_PKG_NAME").expect("Package name is set").to_uppercase().replace('-', "_"),
 	)
 }
 
@@ -214,10 +204,7 @@ fn generate_rerun_if_changed_instructions() {
 	// Make sure that the `build.rs` is called again if one of the following env variables changes.
 	println!("cargo:rerun-if-env-changed={}", crate::SKIP_BUILD_ENV);
 	println!("cargo:rerun-if-env-changed={}", crate::FORCE_WASM_BUILD_ENV);
-	println!(
-		"cargo:rerun-if-env-changed={}",
-		generate_crate_skip_build_env_name()
-	);
+	println!("cargo:rerun-if-env-changed={}", generate_crate_skip_build_env_name());
 }
 
 /// Build the currently built project as wasm binary.
@@ -255,15 +242,9 @@ fn build_project(
 	);
 
 	let (wasm_binary, wasm_binary_bloaty) = if let Some(wasm_binary) = wasm_binary {
-		(
-			wasm_binary.wasm_binary_path_escaped(),
-			bloaty.wasm_binary_bloaty_path_escaped(),
-		)
+		(wasm_binary.wasm_binary_path_escaped(), bloaty.wasm_binary_bloaty_path_escaped())
 	} else {
-		(
-			bloaty.wasm_binary_bloaty_path_escaped(),
-			bloaty.wasm_binary_bloaty_path_escaped(),
-		)
+		(bloaty.wasm_binary_bloaty_path_escaped(), bloaty.wasm_binary_bloaty_path_escaped())
 	};
 
 	crate::write_file_if_changed(

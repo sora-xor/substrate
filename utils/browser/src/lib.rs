@@ -115,9 +115,7 @@ where
 		max_runtime_instances: 8,
 		announce_block: true,
 		base_path: None,
-		informant_output_format: sc_informant::OutputFormat {
-			enable_color: false,
-		},
+		informant_output_format: sc_informant::OutputFormat { enable_color: false },
 		disable_log_reloading: false,
 	};
 
@@ -175,10 +173,7 @@ impl Client {
 		});
 		wasm_bindgen_futures::future_to_promise(async {
 			match rx.await {
-				Ok(fut) => fut
-					.await
-					.map(|s| JsValue::from_str(&s))
-					.ok_or_else(|| JsValue::NULL),
+				Ok(fut) => fut.await.map(|s| JsValue::from_str(&s)).ok_or_else(|| JsValue::NULL),
 				Err(_) => Err(JsValue::NULL),
 			}
 		})

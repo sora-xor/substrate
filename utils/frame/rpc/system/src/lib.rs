@@ -84,12 +84,7 @@ pub struct FullSystem<P: TransactionPool, C, B> {
 impl<P: TransactionPool, C, B> FullSystem<P, C, B> {
 	/// Create new `FullSystem` given client and transaction pool.
 	pub fn new(client: Arc<C>, pool: Arc<P>, deny_unsafe: DenyUnsafe) -> Self {
-		FullSystem {
-			client,
-			pool,
-			deny_unsafe,
-			_marker: Default::default(),
-		}
+		FullSystem { client, pool, deny_unsafe, _marker: Default::default() }
 	}
 }
 
@@ -112,13 +107,11 @@ where
 			let best = self.client.info().best_hash;
 			let at = BlockId::hash(best);
 
-			let nonce = api
-				.account_nonce(&at, account.clone())
-				.map_err(|e| RpcError {
-					code: ErrorCode::ServerError(Error::RuntimeError.into()),
-					message: "Unable to query nonce.".into(),
-					data: Some(format!("{:?}", e).into()),
-				})?;
+			let nonce = api.account_nonce(&at, account.clone()).map_err(|e| RpcError {
+				code: ErrorCode::ServerError(Error::RuntimeError.into()),
+				message: "Unable to query nonce.".into(),
+				data: Some(format!("{:?}", e).into()),
+			})?;
 
 			Ok(adjust_nonce(&*self.pool, account, nonce))
 		};
@@ -177,12 +170,7 @@ impl<P: TransactionPool, C, F, Block> LightSystem<P, C, F, Block> {
 		fetcher: Arc<F>,
 		pool: Arc<P>,
 	) -> Self {
-		LightSystem {
-			client,
-			remote_blockchain,
-			fetcher,
-			pool,
-		}
+		LightSystem { client, remote_blockchain, fetcher, pool }
 	}
 }
 
@@ -304,13 +292,8 @@ mod tests {
 		// given
 		let client = Arc::new(substrate_test_runtime_client::new());
 		let spawner = sp_core::testing::TaskExecutor::new();
-		let pool = BasicPool::new_full(
-			Default::default(),
-			true.into(),
-			None,
-			spawner,
-			client.clone(),
-		);
+		let pool =
+			BasicPool::new_full(Default::default(), true.into(), None, spawner, client.clone());
 
 		let source = sp_runtime::transaction_validity::TransactionSource::External;
 		let new_transaction = |nonce: u64| {
@@ -344,13 +327,8 @@ mod tests {
 		// given
 		let client = Arc::new(substrate_test_runtime_client::new());
 		let spawner = sp_core::testing::TaskExecutor::new();
-		let pool = BasicPool::new_full(
-			Default::default(),
-			true.into(),
-			None,
-			spawner,
-			client.clone(),
-		);
+		let pool =
+			BasicPool::new_full(Default::default(), true.into(), None, spawner, client.clone());
 
 		let accounts = FullSystem::new(client, pool, DenyUnsafe::Yes);
 
@@ -368,13 +346,8 @@ mod tests {
 		// given
 		let client = Arc::new(substrate_test_runtime_client::new());
 		let spawner = sp_core::testing::TaskExecutor::new();
-		let pool = BasicPool::new_full(
-			Default::default(),
-			true.into(),
-			None,
-			spawner,
-			client.clone(),
-		);
+		let pool =
+			BasicPool::new_full(Default::default(), true.into(), None, spawner, client.clone());
 
 		let accounts = FullSystem::new(client, pool, DenyUnsafe::No);
 
@@ -402,13 +375,8 @@ mod tests {
 		// given
 		let client = Arc::new(substrate_test_runtime_client::new());
 		let spawner = sp_core::testing::TaskExecutor::new();
-		let pool = BasicPool::new_full(
-			Default::default(),
-			true.into(),
-			None,
-			spawner,
-			client.clone(),
-		);
+		let pool =
+			BasicPool::new_full(Default::default(), true.into(), None, spawner, client.clone());
 
 		let accounts = FullSystem::new(client, pool, DenyUnsafe::No);
 
@@ -426,9 +394,6 @@ mod tests {
 		// then
 		let bytes = res.wait().unwrap().0;
 		let apply_res: ApplyExtrinsicResult = Decode::decode(&mut bytes.as_slice()).unwrap();
-		assert_eq!(
-			apply_res,
-			Err(TransactionValidityError::Invalid(InvalidTransaction::Stale))
-		);
+		assert_eq!(apply_res, Err(TransactionValidityError::Invalid(InvalidTransaction::Stale)));
 	}
 }

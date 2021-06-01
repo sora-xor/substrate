@@ -126,11 +126,9 @@ pub(crate) fn create_and_compile(
 		.as_ref()
 		.map(|wasm_binary| copy_wasm_to_target_directory(project_cargo_toml, wasm_binary));
 
-	wasm_binary_compressed
-		.as_ref()
-		.map(|wasm_binary_compressed| {
-			copy_wasm_to_target_directory(project_cargo_toml, wasm_binary_compressed)
-		});
+	wasm_binary_compressed.as_ref().map(|wasm_binary_compressed| {
+		copy_wasm_to_target_directory(project_cargo_toml, wasm_binary_compressed)
+	});
 
 	generate_rerun_if_changed_instructions(project_cargo_toml, &project, &wasm_workspace);
 
@@ -209,10 +207,7 @@ fn get_wasm_workspace_root() -> PathBuf {
 		}
 	}
 
-	panic!(
-		"Could not find target dir in: {}",
-		build_helper::out_dir().display()
-	)
+	panic!("Could not find target dir in: {}", build_helper::out_dir().display())
 }
 
 fn create_project_cargo_toml(
@@ -246,28 +241,23 @@ fn create_project_cargo_toml(
 	wasm_workspace_toml.insert("profile".into(), profile.into());
 
 	// Add patch section from the project root `Cargo.toml`
-	if let Some(mut patch) = workspace_toml
-		.remove("patch")
-		.and_then(|p| p.try_into::<Table>().ok())
+	if let Some(mut patch) = workspace_toml.remove("patch").and_then(|p| p.try_into::<Table>().ok())
 	{
 		// Iterate over all patches and make the patch path absolute from the workspace root path.
 		patch
 			.iter_mut()
 			.filter_map(|p| {
-				p.1.as_table_mut()
-					.map(|t| t.iter_mut().filter_map(|t| t.1.as_table_mut()))
+				p.1.as_table_mut().map(|t| t.iter_mut().filter_map(|t| t.1.as_table_mut()))
 			})
 			.flatten()
 			.for_each(|p| {
-				p.iter_mut()
-					.filter(|(k, _)| k == &"path")
-					.for_each(|(_, v)| {
-						if let Some(path) = v.as_str().map(PathBuf::from) {
-							if path.is_relative() {
-								*v = workspace_root_path.join(path).display().to_string().into();
-							}
+				p.iter_mut().filter(|(k, _)| k == &"path").for_each(|(_, v)| {
+					if let Some(path) = v.as_str().map(PathBuf::from) {
+						if path.is_relative() {
+							*v = workspace_root_path.join(path).display().to_string().into();
 						}
-					})
+					}
+				})
 			});
 
 		wasm_workspace_toml.insert("patch".into(), patch.into());
@@ -293,10 +283,7 @@ fn create_project_cargo_toml(
 	wasm_project.insert("package".into(), crate_name.into());
 	wasm_project.insert("path".into(), crate_path.display().to_string().into());
 	wasm_project.insert("default-features".into(), false.into());
-	wasm_project.insert(
-		"features".into(),
-		enabled_features.collect::<Vec<_>>().into(),
-	);
+	wasm_project.insert("features".into(), enabled_features.collect::<Vec<_>>().into());
 
 	dependencies.insert("wasm-project".into(), wasm_project.into());
 
@@ -376,9 +363,7 @@ fn create_project(
 	features_to_enable: Vec<String>,
 ) -> PathBuf {
 	let crate_name = get_crate_name(project_cargo_toml);
-	let crate_path = project_cargo_toml
-		.parent()
-		.expect("Parent path exists; qed");
+	let crate_path = project_cargo_toml.parent().expect("Parent path exists; qed");
 	let wasm_binary = get_wasm_binary_name(project_cargo_toml);
 	let wasm_project_folder = wasm_workspace.join(&crate_name);
 
@@ -463,20 +448,9 @@ fn build_project(project: &Path, default_rustflags: &str, cargo_cmd: CargoComman
 		build_cmd.arg("--release");
 	};
 
-	println!(
-		"{}",
-		colorize_info_message("Information that should be included in a bug report.")
-	);
-	println!(
-		"{} {:?}",
-		colorize_info_message("Executing build command:"),
-		build_cmd
-	);
-	println!(
-		"{} {}",
-		colorize_info_message("Using rustc version:"),
-		cargo_cmd.rustc_version()
-	);
+	println!("{}", colorize_info_message("Information that should be included in a bug report."));
+	println!("{} {:?}", colorize_info_message("Executing build command:"), build_cmd);
+	println!("{} {}", colorize_info_message("Using rustc version:"), cargo_cmd.rustc_version());
 
 	match build_cmd.status().map(|s| s.success()) {
 		Ok(true) => {}
@@ -502,9 +476,7 @@ fn compact_wasm_file(
 	let wasm_compact_file = if is_release_build {
 		let wasm_compact_file = project.join(format!(
 			"{}.compact.wasm",
-			wasm_binary_name
-				.clone()
-				.unwrap_or_else(|| default_wasm_binary_name.clone()),
+			wasm_binary_name.clone().unwrap_or_else(|| default_wasm_binary_name.clone()),
 		));
 		wasm_gc::garbage_collect_file(&wasm_file, &wasm_compact_file)
 			.expect("Failed to compact generated WASM binary.");
@@ -514,9 +486,8 @@ fn compact_wasm_file(
 	};
 
 	let wasm_compact_compressed_file = wasm_compact_file.as_ref().and_then(|compact_binary| {
-		let file_name = wasm_binary_name
-			.clone()
-			.unwrap_or_else(|| default_wasm_binary_name.clone());
+		let file_name =
+			wasm_binary_name.clone().unwrap_or_else(|| default_wasm_binary_name.clone());
 
 		let wasm_compact_compressed_file =
 			project.join(format!("{}.compact.compressed.wasm", file_name,));
@@ -537,11 +508,7 @@ fn compact_wasm_file(
 	let bloaty_file = project.join(bloaty_file_name);
 	fs::copy(wasm_file, &bloaty_file).expect("Copying the bloaty file to the project dir.");
 
-	(
-		wasm_compact_file,
-		wasm_compact_compressed_file,
-		WasmBinaryBloaty(bloaty_file),
-	)
+	(wasm_compact_file, wasm_compact_compressed_file, WasmBinaryBloaty(bloaty_file))
 }
 
 fn compress_wasm(wasm_binary_path: &Path, compressed_binary_out_path: &Path) -> bool {
@@ -633,11 +600,8 @@ fn generate_rerun_if_changed_instructions(
 	packages.insert(DeduplicatePackage::from(package));
 
 	while let Some(dependency) = dependencies.pop() {
-		let path_or_git_dep = dependency
-			.source
-			.as_ref()
-			.map(|s| s.starts_with("git+"))
-			.unwrap_or(true);
+		let path_or_git_dep =
+			dependency.source.as_ref().map(|s| s.starts_with("git+")).unwrap_or(true);
 
 		let package = metadata
 			.packages
@@ -663,14 +627,8 @@ fn generate_rerun_if_changed_instructions(
 	// Register our env variables
 	println!("cargo:rerun-if-env-changed={}", crate::SKIP_BUILD_ENV);
 	println!("cargo:rerun-if-env-changed={}", crate::WASM_BUILD_TYPE_ENV);
-	println!(
-		"cargo:rerun-if-env-changed={}",
-		crate::WASM_BUILD_RUSTFLAGS_ENV
-	);
-	println!(
-		"cargo:rerun-if-env-changed={}",
-		crate::WASM_TARGET_DIRECTORY
-	);
+	println!("cargo:rerun-if-env-changed={}", crate::WASM_BUILD_RUSTFLAGS_ENV);
+	println!("cargo:rerun-if-env-changed={}", crate::WASM_TARGET_DIRECTORY);
 	println!("cargo:rerun-if-env-changed={}", crate::WASM_BUILD_TOOLCHAIN);
 }
 
@@ -691,10 +649,7 @@ fn package_rerun_if_changed(package: &DeduplicatePackage) {
 		})
 		.filter_map(|p| p.ok().map(|p| p.into_path()))
 		.filter(|p| {
-			p.is_dir()
-				|| p.extension()
-					.map(|e| e == "rs" || e == "toml")
-					.unwrap_or_default()
+			p.is_dir() || p.extension().map(|e| e == "rs" || e == "toml").unwrap_or_default()
 		})
 		.for_each(|p| rerun_if_changed(p));
 }

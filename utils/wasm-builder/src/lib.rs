@@ -150,11 +150,7 @@ fn copy_file_if_changed(src: PathBuf, dst: PathBuf) {
 
 	if src_file != dst_file {
 		fs::copy(&src, &dst).unwrap_or_else(|_| {
-			panic!(
-				"Copying `{}` to `{}` can not fail; qed",
-				src.display(),
-				dst.display()
-			)
+			panic!("Copying `{}` to `{}` can not fail; qed", src.display(), dst.display())
 		});
 	}
 }
@@ -187,19 +183,12 @@ fn get_nightly_cargo() -> CargoCommand {
 /// Get a nightly from rustup. If `selected` is `Some(_)`, a `CargoCommand` using the given
 /// nightly is returned.
 fn get_rustup_nightly(selected: Option<String>) -> Option<CargoCommand> {
-	let host = format!(
-		"-{}",
-		env::var("HOST").expect("`HOST` is always set by cargo")
-	);
+	let host = format!("-{}", env::var("HOST").expect("`HOST` is always set by cargo"));
 
 	let version = match selected {
 		Some(selected) => selected,
 		None => {
-			let output = Command::new("rustup")
-				.args(&["toolchain", "list"])
-				.output()
-				.ok()?
-				.stdout;
+			let output = Command::new("rustup").args(&["toolchain", "list"]).output().ok()?.stdout;
 			let lines = output.as_slice().lines();
 
 			let mut latest_nightly = None;
@@ -214,10 +203,7 @@ fn get_rustup_nightly(selected: Option<String>) -> Option<CargoCommand> {
 		}
 	};
 
-	Some(CargoCommand::new_with_args(
-		"rustup",
-		&["run", &version, "cargo"],
-	))
+	Some(CargoCommand::new_with_args("rustup", &["run", &version, "cargo"]))
 }
 
 /// Wraps a specific command which represents a cargo invocation.
@@ -229,10 +215,7 @@ struct CargoCommand {
 
 impl CargoCommand {
 	fn new(program: &str) -> Self {
-		CargoCommand {
-			program: program.into(),
-			args: Vec::new(),
-		}
+		CargoCommand { program: program.into(), args: Vec::new() }
 	}
 
 	fn new_with_args(program: &str, args: &[&str]) -> Self {

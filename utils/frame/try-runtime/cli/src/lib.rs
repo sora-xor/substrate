@@ -90,17 +90,11 @@ pub enum State {
 }
 
 fn parse_hash(block_number: &str) -> Result<String, String> {
-	let block_number = if block_number.starts_with("0x") {
-		&block_number[2..]
-	} else {
-		block_number
-	};
+	let block_number =
+		if block_number.starts_with("0x") { &block_number[2 ..] } else { block_number };
 
 	if let Some(pos) = block_number.chars().position(|c| !c.is_ascii_hexdigit()) {
-		Err(format!(
-			"Expected block hash, found illegal hex character at position: {}",
-			2 + pos,
-		))
+		Err(format!("Expected block hash, found illegal hex character at position: {}", 2 + pos,))
 	} else {
 		Ok(block_number.into())
 	}
@@ -160,24 +154,20 @@ impl TryRuntimeCmd {
 						state_snapshot: SnapshotConfig::new(snapshot_path),
 					}))
 				}
-				State::Live {
-					url,
-					snapshot_path,
-					block_at,
-					modules,
-				} => Builder::<B>::new().mode(Mode::Online(OnlineConfig {
-					transport: url.to_owned().into(),
-					state_snapshot: snapshot_path.as_ref().map(SnapshotConfig::new),
-					modules: modules.to_owned().unwrap_or_default(),
-					at: block_at
-						.as_ref()
-						.map(|b| {
-							b.parse()
-								.map_err(|e| format!("Could not parse hash: {:?}", e))
-						})
-						.transpose()?,
-					..Default::default()
-				})),
+				State::Live { url, snapshot_path, block_at, modules } => {
+					Builder::<B>::new().mode(Mode::Online(OnlineConfig {
+						transport: url.to_owned().into(),
+						state_snapshot: snapshot_path.as_ref().map(SnapshotConfig::new),
+						modules: modules.to_owned().unwrap_or_default(),
+						at: block_at
+							.as_ref()
+							.map(|b| {
+								b.parse().map_err(|e| format!("Could not parse hash: {:?}", e))
+							})
+							.transpose()?,
+						..Default::default()
+					}))
+				}
 			};
 
 			// inject the code into this ext.
@@ -196,12 +186,7 @@ impl TryRuntimeCmd {
 			sp_core::testing::TaskExecutor::new(),
 		)
 		.execute(execution.into())
-		.map_err(|e| {
-			format!(
-				"failed to execute 'TryRuntime_on_runtime_upgrade' due to {:?}",
-				e
-			)
-		})?;
+		.map_err(|e| format!("failed to execute 'TryRuntime_on_runtime_upgrade' due to {:?}", e))?;
 
 		let (weight, total_weight) = <(u64, u64) as Decode>::decode(&mut &*encoded_result)
 			.map_err(|e| format!("failed to decode output due to {:?}", e))?;
