@@ -127,7 +127,10 @@ impl<B: BlockT> Default for OnlineConfig<B> {
 impl<B: BlockT> OnlineConfig<B> {
 	/// Return rpc (ws) client.
 	fn rpc_client(&self) -> &WsClient {
-		self.transport.client.as_ref().expect("ws client must have been initialized by now; qed.")
+		self.transport
+			.client
+			.as_ref()
+			.expect("ws client must have been initialized by now; qed.")
 	}
 }
 

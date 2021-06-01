@@ -197,26 +197,32 @@ fn get_benchmark_data(batch: &BenchmarkBatch, analysis_choice: &AnalysisChoice) 
 				});
 			}
 		});
-	reads.slopes.into_iter().zip(reads.names.iter()).zip(extract_errors(&reads.model)).for_each(
-		|((slope, name), error)| {
+	reads
+		.slopes
+		.into_iter()
+		.zip(reads.names.iter())
+		.zip(extract_errors(&reads.model))
+		.for_each(|((slope, name), error)| {
 			if !slope.is_zero() {
 				if !used_components.contains(&name) {
 					used_components.push(name);
 				}
 				used_reads.push(ComponentSlope { name: name.clone(), slope, error });
 			}
-		},
-	);
-	writes.slopes.into_iter().zip(writes.names.iter()).zip(extract_errors(&writes.model)).for_each(
-		|((slope, name), error)| {
+		});
+	writes
+		.slopes
+		.into_iter()
+		.zip(writes.names.iter())
+		.zip(extract_errors(&writes.model))
+		.for_each(|((slope, name), error)| {
 			if !slope.is_zero() {
 				if !used_components.contains(&name) {
 					used_components.push(name);
 				}
 				used_writes.push(ComponentSlope { name: name.clone(), slope, error });
 			}
-		},
-	);
+		});
 
 	// This puts a marker on any component which is entirely unused in the weight formula.
 	let components = batch.results[0]
@@ -382,7 +388,13 @@ impl handlebars::HelperDef for JoinHelper {
 		let param = h.param(0).unwrap();
 		let value = param.value();
 		let joined = if value.is_array() {
-			value.as_array().unwrap().iter().map(|v| v.render()).collect::<Vec<String>>().join(" ")
+			value
+				.as_array()
+				.unwrap()
+				.iter()
+				.map(|v| v.render())
+				.collect::<Vec<String>>()
+				.join(" ")
 		} else {
 			value.render()
 		};
@@ -472,18 +484,21 @@ mod test {
 		)
 		.unwrap();
 
-		let first_benchmark =
-			&mapped_results.get(&("first_pallet".to_string(), "instance".to_string())).unwrap()[0];
+		let first_benchmark = &mapped_results
+			.get(&("first_pallet".to_string(), "instance".to_string()))
+			.unwrap()[0];
 		assert_eq!(first_benchmark.name, "first_benchmark");
 		check_data(first_benchmark, "a", 10, 3);
 
-		let second_benchmark =
-			&mapped_results.get(&("first_pallet".to_string(), "instance".to_string())).unwrap()[1];
+		let second_benchmark = &mapped_results
+			.get(&("first_pallet".to_string(), "instance".to_string()))
+			.unwrap()[1];
 		assert_eq!(second_benchmark.name, "second_benchmark");
 		check_data(second_benchmark, "b", 9, 2);
 
-		let second_pallet_benchmark =
-			&mapped_results.get(&("second_pallet".to_string(), "instance".to_string())).unwrap()[0];
+		let second_pallet_benchmark = &mapped_results
+			.get(&("second_pallet".to_string(), "instance".to_string()))
+			.unwrap()[0];
 		assert_eq!(second_pallet_benchmark.name, "first_benchmark");
 		check_data(second_pallet_benchmark, "c", 3, 4);
 	}
