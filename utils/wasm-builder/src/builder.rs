@@ -15,7 +15,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{env, path::{PathBuf, Path}, process};
+use std::{
+	env,
+	path::{Path, PathBuf},
+	process,
+};
 
 /// Returns the manifest dir from the `CARGO_MANIFEST_DIR` env.
 fn get_manifest_dir() -> PathBuf {
@@ -50,10 +54,7 @@ impl WasmBuilderSelectProject {
 	/// Use the given `path` as project for building the WASM binary.
 	///
 	/// Returns an error if the given `path` does not points to a `Cargo.toml`.
-	pub fn with_project(
-		self,
-		path: impl Into<PathBuf>,
-	) -> Result<WasmBuilder, &'static str> {
+	pub fn with_project(self, path: impl Into<PathBuf>) -> Result<WasmBuilder, &'static str> {
 		let path = path.into();
 
 		if path.ends_with("Cargo.toml") && path.exists() {
@@ -97,16 +98,15 @@ pub struct WasmBuilder {
 impl WasmBuilder {
 	/// Create a new instance of the builder.
 	pub fn new() -> WasmBuilderSelectProject {
-		WasmBuilderSelectProject {
-			_ignore: (),
-		}
+		WasmBuilderSelectProject { _ignore: () }
 	}
 
 	/// Enable exporting `__heap_base` as global variable in the WASM binary.
 	///
 	/// This adds `-Clink-arg=--export=__heap_base` to `RUST_FLAGS`.
 	pub fn export_heap_base(mut self) -> Self {
-		self.rust_flags.push("-Clink-arg=--export=__heap_base".into());
+		self.rust_flags
+			.push("-Clink-arg=--export=__heap_base".into());
 		self
 	}
 
@@ -148,7 +148,9 @@ impl WasmBuilder {
 	pub fn build(self) {
 		let out_dir = PathBuf::from(env::var("OUT_DIR").expect("`OUT_DIR` is set by cargo!"));
 		let file_path = out_dir.join(
-			self.file_name.clone().unwrap_or_else(|| "wasm_binary.rs".into()),
+			self.file_name
+				.clone()
+				.unwrap_or_else(|| "wasm_binary.rs".into()),
 		);
 
 		if check_skip_build() {
@@ -164,7 +166,10 @@ impl WasmBuilder {
 		build_project(
 			file_path,
 			self.project_cargo_toml,
-			self.rust_flags.into_iter().map(|f| format!("{} ", f)).collect(),
+			self.rust_flags
+				.into_iter()
+				.map(|f| format!("{} ", f))
+				.collect(),
 			self.features_to_enable,
 			self.file_name,
 		);
@@ -179,13 +184,17 @@ impl WasmBuilder {
 fn generate_crate_skip_build_env_name() -> String {
 	format!(
 		"SKIP_{}_WASM_BUILD",
-		env::var("CARGO_PKG_NAME").expect("Package name is set").to_uppercase().replace('-', "_"),
+		env::var("CARGO_PKG_NAME")
+			.expect("Package name is set")
+			.to_uppercase()
+			.replace('-', "_"),
 	)
 }
 
 /// Checks if the build of the WASM binary should be skipped.
 fn check_skip_build() -> bool {
-	env::var(crate::SKIP_BUILD_ENV).is_ok() || env::var(generate_crate_skip_build_env_name()).is_ok()
+	env::var(crate::SKIP_BUILD_ENV).is_ok()
+		|| env::var(generate_crate_skip_build_env_name()).is_ok()
 }
 
 /// Provide a dummy WASM binary if there doesn't exist one.
@@ -205,7 +214,10 @@ fn generate_rerun_if_changed_instructions() {
 	// Make sure that the `build.rs` is called again if one of the following env variables changes.
 	println!("cargo:rerun-if-env-changed={}", crate::SKIP_BUILD_ENV);
 	println!("cargo:rerun-if-env-changed={}", crate::FORCE_WASM_BUILD_ENV);
-	println!("cargo:rerun-if-env-changed={}", generate_crate_skip_build_env_name());
+	println!(
+		"cargo:rerun-if-env-changed={}",
+		generate_crate_skip_build_env_name()
+	);
 }
 
 /// Build the currently built project as wasm binary.
@@ -231,7 +243,7 @@ fn build_project(
 		Err(err_msg) => {
 			eprintln!("{}", err_msg);
 			process::exit(1);
-		},
+		}
 	};
 
 	let (wasm_binary, bloaty) = crate::wasm_project::create_and_compile(

@@ -20,16 +20,14 @@
 
 #![warn(missing_docs)]
 
+use codec::{DecodeAll, FullCodec, FullEncode};
 use core::marker::PhantomData;
+use frame_support::storage::generator::{StorageDoubleMap, StorageMap, StorageValue};
 use futures::compat::Future01CompatExt;
 use jsonrpc_client_transports::RpcError;
-use codec::{DecodeAll, FullCodec, FullEncode};
-use serde::{de::DeserializeOwned, Serialize};
-use frame_support::storage::generator::{
-	StorageDoubleMap, StorageMap, StorageValue
-};
-use sp_storage::{StorageData, StorageKey};
 use sc_rpc_api::state::StateClient;
+use serde::{de::DeserializeOwned, Serialize};
+use sp_storage::{StorageData, StorageKey};
 
 /// A typed query on chain state usable from an RPC client.
 ///

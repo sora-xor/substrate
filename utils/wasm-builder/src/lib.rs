@@ -96,7 +96,12 @@
 //! as well. For example if installing the rust nightly from 20.02.2020 using `rustup install nightly-2020-02-20`,
 //! the wasm target needs to be installed as well `rustup target add wasm32-unknown-unknown --toolchain nightly-2020-02-20`.
 
-use std::{env, fs, path::{PathBuf, Path}, process::Command, io::BufRead};
+use std::{
+	env, fs,
+	io::BufRead,
+	path::{Path, PathBuf},
+	process::Command,
+};
 
 mod builder;
 mod prerequisites;
@@ -144,18 +149,20 @@ fn copy_file_if_changed(src: PathBuf, dst: PathBuf) {
 	let dst_file = fs::read_to_string(&dst).ok();
 
 	if src_file != dst_file {
-		fs::copy(&src, &dst)
-			.unwrap_or_else(
-				|_| panic!("Copying `{}` to `{}` can not fail; qed", src.display(), dst.display())
-			);
+		fs::copy(&src, &dst).unwrap_or_else(|_| {
+			panic!(
+				"Copying `{}` to `{}` can not fail; qed",
+				src.display(),
+				dst.display()
+			)
+		});
 	}
 }
 
 /// Get a cargo command that compiles with nightly
 fn get_nightly_cargo() -> CargoCommand {
-	let env_cargo = CargoCommand::new(
-		&env::var("CARGO").expect("`CARGO` env variable is always set by cargo"),
-	);
+	let env_cargo =
+		CargoCommand::new(&env::var("CARGO").expect("`CARGO` env variable is always set by cargo"));
 	let default_cargo = CargoCommand::new("cargo");
 	let rustup_run_nightly = CargoCommand::new_with_args("rustup", &["run", "nightly", "cargo"]);
 	let wasm_toolchain = env::var(WASM_BUILD_TOOLCHAIN).ok();
@@ -180,12 +187,19 @@ fn get_nightly_cargo() -> CargoCommand {
 /// Get a nightly from rustup. If `selected` is `Some(_)`, a `CargoCommand` using the given
 /// nightly is returned.
 fn get_rustup_nightly(selected: Option<String>) -> Option<CargoCommand> {
-	let host = format!("-{}", env::var("HOST").expect("`HOST` is always set by cargo"));
+	let host = format!(
+		"-{}",
+		env::var("HOST").expect("`HOST` is always set by cargo")
+	);
 
 	let version = match selected {
 		Some(selected) => selected,
 		None => {
-			let output = Command::new("rustup").args(&["toolchain", "list"]).output().ok()?.stdout;
+			let output = Command::new("rustup")
+				.args(&["toolchain", "list"])
+				.output()
+				.ok()?
+				.stdout;
 			let lines = output.as_slice().lines();
 
 			let mut latest_nightly = None;
@@ -200,7 +214,10 @@ fn get_rustup_nightly(selected: Option<String>) -> Option<CargoCommand> {
 		}
 	};
 
-	Some(CargoCommand::new_with_args("rustup", &["run", &version, "cargo"]))
+	Some(CargoCommand::new_with_args(
+		"rustup",
+		&["run", &version, "cargo"],
+	))
 }
 
 /// Wraps a specific command which represents a cargo invocation.
@@ -212,7 +229,10 @@ struct CargoCommand {
 
 impl CargoCommand {
 	fn new(program: &str) -> Self {
-		CargoCommand { program: program.into(), args: Vec::new() }
+		CargoCommand {
+			program: program.into(),
+			args: Vec::new(),
+		}
 	}
 
 	fn new_with_args(program: &str, args: &[&str]) -> Self {
@@ -234,8 +254,9 @@ impl CargoCommand {
 		// variable is set, we can assume that whatever rust compiler we have, it is a nightly compiler.
 		// For "more" information, see:
 		// https://github.com/rust-lang/rust/blob/fa0f7d0080d8e7e9eb20aa9cbf8013f96c81287f/src/libsyntax/feature_gate/check.rs#L891
-		env::var("RUSTC_BOOTSTRAP").is_ok() ||
-			self.command()
+		env::var("RUSTC_BOOTSTRAP").is_ok()
+			|| self
+				.command()
 				.arg("--version")
 				.output()
 				.map_err(|_| ())
@@ -253,10 +274,7 @@ struct CargoCommandVersioned {
 
 impl CargoCommandVersioned {
 	fn new(command: CargoCommand, version: String) -> Self {
-		Self {
-			command,
-			version,
-		}
+		Self { command, version }
 	}
 
 	/// Returns the `rustc` version.

@@ -18,14 +18,14 @@
 //! `Structopt`-ready struct for `try-runtime`.
 
 use parity_scale_codec::Decode;
-use std::{fmt::Debug, path::PathBuf, str::FromStr};
-use sc_service::Configuration;
 use sc_cli::{CliConfiguration, ExecutionStrategy, WasmExecutionMethod};
 use sc_executor::NativeExecutor;
+use sc_service::Configuration;
 use sc_service::NativeExecutionDispatch;
-use sp_state_machine::StateMachine;
+use sp_core::storage::{well_known_keys, StorageData, StorageKey};
 use sp_runtime::traits::{Block as BlockT, NumberFor};
-use sp_core::storage::{StorageData, StorageKey, well_known_keys};
+use sp_state_machine::StateMachine;
+use std::{fmt::Debug, path::PathBuf, str::FromStr};
 
 /// Various commands to try out the new runtime, over configurable states.
 ///
@@ -66,9 +66,7 @@ pub struct TryRuntimeCmd {
 #[derive(Debug, structopt::StructOpt)]
 pub enum State {
 	/// Use a state snapshot as state to run the migration.
-	Snap {
-		snapshot_path: PathBuf,
-	},
+	Snap { snapshot_path: PathBuf },
 
 	/// Use a live chain to run the migration.
 	Live {
@@ -153,24 +151,31 @@ impl TryRuntimeCmd {
 		);
 
 		let ext = {
-			use remote_externalities::{Builder, Mode, SnapshotConfig, OfflineConfig, OnlineConfig};
+			use remote_externalities::{
+				Builder, Mode, OfflineConfig, OnlineConfig, SnapshotConfig,
+			};
 			let builder = match &self.state {
 				State::Snap { snapshot_path } => {
 					Builder::<B>::new().mode(Mode::Offline(OfflineConfig {
 						state_snapshot: SnapshotConfig::new(snapshot_path),
 					}))
-				},
+				}
 				State::Live {
 					url,
 					snapshot_path,
 					block_at,
-					modules
+					modules,
 				} => Builder::<B>::new().mode(Mode::Online(OnlineConfig {
 					transport: url.to_owned().into(),
 					state_snapshot: snapshot_path.as_ref().map(SnapshotConfig::new),
 					modules: modules.to_owned().unwrap_or_default(),
-					at: block_at.as_ref()
-						.map(|b| b.parse().map_err(|e| format!("Could not parse hash: {:?}", e))).transpose()?,
+					at: block_at
+						.as_ref()
+						.map(|b| {
+							b.parse()
+								.map_err(|e| format!("Could not parse hash: {:?}", e))
+						})
+						.transpose()?,
 					..Default::default()
 				})),
 			};
@@ -187,12 +192,16 @@ impl TryRuntimeCmd {
 			"TryRuntime_on_runtime_upgrade",
 			&[],
 			ext.extensions,
-			&sp_state_machine::backend::BackendRuntimeCode::new(&ext.backend)
-				.runtime_code()?,
+			&sp_state_machine::backend::BackendRuntimeCode::new(&ext.backend).runtime_code()?,
 			sp_core::testing::TaskExecutor::new(),
 		)
 		.execute(execution.into())
-		.map_err(|e| format!("failed to execute 'TryRuntime_on_runtime_upgrade' due to {:?}", e))?;
+		.map_err(|e| {
+			format!(
+				"failed to execute 'TryRuntime_on_runtime_upgrade' due to {:?}",
+				e
+			)
+		})?;
 
 		let (weight, total_weight) = <(u64, u64) as Decode>::decode(&mut &*encoded_result)
 			.map_err(|e| format!("failed to decode output due to {:?}", e))?;

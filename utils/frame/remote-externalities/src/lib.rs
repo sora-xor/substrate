@@ -20,21 +20,19 @@
 //! An equivalent of `sp_io::TestExternalities` that can load its state from a remote substrate
 //! based chain, or a local state snapshot file.
 
+use codec::{Decode, Encode};
+use jsonrpsee_ws_client::{traits::Client, v2::params::JsonRpcParams, WsClient, WsClientBuilder};
+use log::*;
+use sp_core::hashing::twox_128;
+use sp_core::{
+	hexdisplay::HexDisplay,
+	storage::{StorageData, StorageKey},
+};
+pub use sp_io::TestExternalities;
+use sp_runtime::traits::Block as BlockT;
 use std::{
 	fs,
 	path::{Path, PathBuf},
-};
-use log::*;
-use sp_core::hashing::twox_128;
-pub use sp_io::TestExternalities;
-use sp_core::{
-	hexdisplay::HexDisplay,
-	storage::{StorageKey, StorageData},
-};
-use codec::{Encode, Decode};
-use sp_runtime::traits::Block as BlockT;
-use jsonrpsee_ws_client::{
-	WsClientBuilder, WsClient, v2::params::JsonRpcParams, traits::Client,
 };
 
 type KeyPair = (StorageKey, StorageData);
@@ -90,13 +88,19 @@ pub struct Transport {
 
 impl Clone for Transport {
 	fn clone(&self) -> Self {
-		Self { uri: self.uri.clone(), client: None }
+		Self {
+			uri: self.uri.clone(),
+			client: None,
+		}
 	}
 }
 
 impl From<String> for Transport {
 	fn from(t: String) -> Self {
-		Self { uri: t, client: None }
+		Self {
+			uri: t,
+			client: None,
+		}
 	}
 }
 
@@ -118,7 +122,10 @@ pub struct OnlineConfig<B: BlockT> {
 impl<B: BlockT> Default for OnlineConfig<B> {
 	fn default() -> Self {
 		Self {
-			transport: Transport { uri: DEFAULT_TARGET.to_string(), client: None },
+			transport: Transport {
+				uri: DEFAULT_TARGET.to_string(),
+				client: None,
+			},
 			at: None,
 			state_snapshot: None,
 			modules: vec![],
@@ -129,7 +136,10 @@ impl<B: BlockT> Default for OnlineConfig<B> {
 impl<B: BlockT> OnlineConfig<B> {
 	/// Return rpc (ws) client.
 	fn rpc_client(&self) -> &WsClient {
-		self.transport.client.as_ref().expect("ws client must have been initialized by now; qed.")
+		self.transport
+			.client
+			.as_ref()
+			.expect("ws client must have been initialized by now; qed.")
 	}
 }
 
@@ -148,7 +158,9 @@ impl SnapshotConfig {
 
 impl Default for SnapshotConfig {
 	fn default() -> Self {
-		Self { path: Path::new("SNAPSHOT").into() }
+		Self {
+			path: Path::new("SNAPSHOT").into(),
+		}
 	}
 }
 
@@ -166,7 +178,11 @@ pub struct Builder<B: BlockT> {
 // that.
 impl<B: BlockT> Default for Builder<B> {
 	fn default() -> Self {
-		Self { inject: Default::default(), mode: Default::default(), hashed_prefixes: Default::default() }
+		Self {
+			inject: Default::default(),
+			mode: Default::default(),
+			hashed_prefixes: Default::default(),
+		}
 	}
 }
 
@@ -191,10 +207,12 @@ impl<B: BlockT> Builder<B> {
 impl<B: BlockT> Builder<B> {
 	async fn rpc_get_head(&self) -> Result<B::Hash, &'static str> {
 		trace!(target: LOG_TARGET, "rpc: finalized_head");
-		RpcApi::<B>::finalized_head(self.as_online().rpc_client()).await.map_err(|e| {
-			error!("Error = {:?}", e);
-			"rpc finalized_head failed."
-		})
+		RpcApi::<B>::finalized_head(self.as_online().rpc_client())
+			.await
+			.map_err(|e| {
+				error!("Error = {:?}", e);
+				"rpc finalized_head failed."
+			})
 	}
 
 	/// Get all the keys at `prefix` at `hash` using the paged, safe RPC methods.
@@ -226,8 +244,9 @@ impl<B: BlockT> Builder<B> {
 				debug!(target: LOG_TARGET, "last page received: {}", page_len);
 				break all_keys;
 			} else {
-				let new_last_key =
-					all_keys.last().expect("all_keys is populated; has .last(); qed");
+				let new_last_key = all_keys
+					.last()
+					.expect("all_keys is populated; has .last(); qed");
 				debug!(
 					target: LOG_TARGET,
 					"new total = {}, full page received: {:?}",
@@ -253,7 +272,11 @@ impl<B: BlockT> Builder<B> {
 		use serde_json::to_value;
 		let keys = self.get_keys_paged(prefix, at).await?;
 		let keys_count = keys.len();
-		info!(target: LOG_TARGET, "Querying a total of {} keys", keys.len());
+		info!(
+			target: LOG_TARGET,
+			"Querying a total of {} keys",
+			keys.len()
+		);
 
 		let mut key_values: Vec<KeyPair> = vec![];
 		let client = self.as_online().rpc_client();
@@ -264,26 +287,34 @@ impl<B: BlockT> Builder<B> {
 				.map(|key| {
 					(
 						"state_getStorage",
-						JsonRpcParams::Array(
-							vec![
-								to_value(key).expect("json serialization will work; qed."),
-								to_value(at).expect("json serialization will work; qed."),
-							]
-						),
+						JsonRpcParams::Array(vec![
+							to_value(key).expect("json serialization will work; qed."),
+							to_value(at).expect("json serialization will work; qed."),
+						]),
 					)
 				})
 				.collect::<Vec<_>>();
-			let values = client.batch_request::<Option<StorageData>>(batch)
+			let values = client
+				.batch_request::<Option<StorageData>>(batch)
 				.await
 				.map_err(|e| {
-					log::error!(target: LOG_TARGET, "failed to execute batch {:?} due to {:?}", chunk_keys, e);
+					log::error!(
+						target: LOG_TARGET,
+						"failed to execute batch {:?} due to {:?}",
+						chunk_keys,
+						e
+					);
 					"batch failed."
 				})?;
 			assert_eq!(chunk_keys.len(), values.len());
 			for (idx, key) in chunk_keys.into_iter().enumerate() {
 				let maybe_value = values[idx].clone();
 				let value = maybe_value.unwrap_or_else(|| {
-					log::warn!(target: LOG_TARGET, "key {:?} had none corresponding value.", &key);
+					log::warn!(
+						target: LOG_TARGET,
+						"key {:?} had none corresponding value.",
+						&key
+					);
 					StorageData(vec![])
 				});
 				key_values.push((key.clone(), value));
@@ -308,14 +339,20 @@ impl<B: BlockT> Builder<B> {
 impl<B: BlockT> Builder<B> {
 	/// Save the given data as state snapshot.
 	fn save_state_snapshot(&self, data: &[KeyPair], path: &Path) -> Result<(), &'static str> {
-		info!(target: LOG_TARGET, "writing to state snapshot file {:?}", path);
+		info!(
+			target: LOG_TARGET,
+			"writing to state snapshot file {:?}", path
+		);
 		fs::write(path, data.encode()).map_err(|_| "fs::write failed.")?;
 		Ok(())
 	}
 
 	/// initialize `Self` from state snapshot. Panics if the file does not exist.
 	fn load_state_snapshot(&self, path: &Path) -> Result<Vec<KeyPair>, &'static str> {
-		info!(target: LOG_TARGET, "scraping key-pairs from state snapshot {:?}", path,);
+		info!(
+			target: LOG_TARGET,
+			"scraping key-pairs from state snapshot {:?}", path,
+		);
 		let bytes = fs::read(path).map_err(|_| "fs::read failed.")?;
 		Decode::decode(&mut &*bytes).map_err(|_| "decode failed")
 	}
@@ -328,7 +365,10 @@ impl<B: BlockT> Builder<B> {
 			.at
 			.expect("online config must be initialized by this point; qed.")
 			.clone();
-		info!(target: LOG_TARGET, "scraping key-pairs from remote @ {:?}", at);
+		info!(
+			target: LOG_TARGET,
+			"scraping key-pairs from remote @ {:?}", at
+		);
 
 		let mut keys_and_values = if config.modules.len() > 0 {
 			let mut filtered_kv = vec![];
@@ -351,8 +391,14 @@ impl<B: BlockT> Builder<B> {
 		};
 
 		for prefix in &self.hashed_prefixes {
-			info!(target: LOG_TARGET, "adding data for hashed prefix: {:?}", HexDisplay::from(prefix));
-			let additional_key_values = self.rpc_get_pairs_paged(StorageKey(prefix.to_vec()), at).await?;
+			info!(
+				target: LOG_TARGET,
+				"adding data for hashed prefix: {:?}",
+				HexDisplay::from(prefix)
+			);
+			let additional_key_values = self
+				.rpc_get_pairs_paged(StorageKey(prefix.to_vec()), at)
+				.await?;
 			keys_and_values.extend(additional_key_values);
 		}
 
@@ -361,7 +407,10 @@ impl<B: BlockT> Builder<B> {
 
 	pub(crate) async fn init_remote_client(&mut self) -> Result<(), &'static str> {
 		let mut online = self.as_online_mut();
-		info!(target: LOG_TARGET, "initializing remote client to {:?}", online.transport.uri);
+		info!(
+			target: LOG_TARGET,
+			"initializing remote client to {:?}", online.transport.uri
+		);
 
 		// First, initialize the ws client.
 		let ws_client = WsClientBuilder::default()
@@ -418,7 +467,7 @@ impl<B: BlockT> Builder<B> {
 		self
 	}
 
-	/// Inject a hashed prefix. This is treated as-is, and should be pre-hashed. 
+	/// Inject a hashed prefix. This is treated as-is, and should be pre-hashed.
 	pub fn inject_hashed_prefix(mut self, hashed: &[u8]) -> Self {
 		self.hashed_prefixes.push(hashed.to_vec());
 		self
@@ -447,7 +496,7 @@ impl<B: BlockT> Builder<B> {
 #[cfg(test)]
 mod test_prelude {
 	pub(crate) use super::*;
-	pub(crate) use sp_runtime::testing::{H256 as Hash, Block as RawBlock, ExtrinsicWrapper};
+	pub(crate) use sp_runtime::testing::{Block as RawBlock, ExtrinsicWrapper, H256 as Hash};
 
 	pub(crate) type Block = RawBlock<ExtrinsicWrapper<Hash>>;
 
@@ -501,7 +550,11 @@ mod remote_tests {
 		init_logger();
 		Builder::<Block>::new()
 			.mode(Mode::Online(OnlineConfig {
-				modules: vec!["Proxy".to_owned(), "Multisig".to_owned(), "PhragmenElection".to_owned()],
+				modules: vec![
+					"Proxy".to_owned(),
+					"Multisig".to_owned(),
+					"PhragmenElection".to_owned(),
+				],
 				..Default::default()
 			}))
 			.build()
