@@ -233,7 +233,7 @@ where
 			}
 		}
 
-		self.roots.push(Node { data, hash: hash, number: number, children: Vec::new() });
+		self.roots.push(Node { data, hash, number, children: Vec::new() });
 
 		self.rebalance();
 
@@ -711,8 +711,7 @@ mod node_implementation {
 			}
 
 			if is_descendent_of(&self.hash, &hash)? {
-				self.children
-					.push(Node { data, hash: hash, number: number, children: Vec::new() });
+				self.children.push(Node { data, hash, number, children: Vec::new() });
 
 				Ok(None)
 			} else {
@@ -913,7 +912,6 @@ mod test {
 	) -> (ForkTree<&'a str, u64, ()>, impl Fn(&&str, &&str) -> Result<bool, TestError>) {
 		let mut tree = ForkTree::new();
 
-		//
 		//     - B - C - D - E
 		//    /
 		//   /   - G
@@ -1178,7 +1176,6 @@ mod test {
 			let mut tree = ForkTree::new();
 
 			let is_descendent_of = |base: &&str, block: &&str| -> Result<bool, TestError> {
-				//
 				// A0 #1 - (B #2) - (C #5) - D #10 - E #15 - (F #100)
 				//                            \
 				//                             - (G #100)
@@ -1406,7 +1403,6 @@ mod test {
 	fn find_node_backtracks_after_finding_highest_descending_node() {
 		let mut tree = ForkTree::new();
 
-		//
 		// A - B
 		//  \
 		//   — C
