@@ -23,8 +23,8 @@
 use codec::{Decode, Encode};
 use jsonrpsee_ws_client::{traits::Client, v2::params::JsonRpcParams, WsClient, WsClientBuilder};
 use log::*;
-use sp_core::hashing::twox_128;
 use sp_core::{
+	hashing::twox_128,
 	hexdisplay::HexDisplay,
 	storage::{StorageData, StorageKey},
 };

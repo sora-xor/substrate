@@ -1,6 +1,8 @@
 hard_tabs = true
 use_small_heuristics = "Max"
 max_width = 100
+comment_width = 100
 chain_width = 80
+imports_granularity = "Crate"
 spaces_around_ranges = true
 binop_separator = "Back"

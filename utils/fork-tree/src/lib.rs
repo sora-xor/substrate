@@ -21,8 +21,7 @@
 #![warn(missing_docs)]
 
 use codec::{Decode, Encode};
-use std::cmp::Reverse;
-use std::fmt;
+use std::{cmp::Reverse, fmt};
 
 /// Error occurred when iterating with the tree.
 #[derive(Clone, Debug, PartialEq)]

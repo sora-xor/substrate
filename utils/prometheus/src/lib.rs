@@ -62,8 +62,8 @@ mod unknown_os {
 #[cfg(not(target_os = "unknown"))]
 mod known_os {
 	use super::*;
-	use hyper::http::StatusCode;
 	use hyper::{
+		http::StatusCode,
 		service::{make_service_fn, service_fn},
 		Body, Request, Response, Server,
 	};

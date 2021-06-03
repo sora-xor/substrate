@@ -18,9 +18,7 @@
 // Outputs benchmark results to Rust files that can be ingested by the runtime.
 
 use core::convert::TryInto;
-use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
+use std::{collections::HashMap, fs, path::PathBuf};
 
 use inflector::Inflector;
 use serde::Serialize;

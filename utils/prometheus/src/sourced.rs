@@ -17,8 +17,10 @@
 
 //! Metrics that are collected from existing sources.
 
-use prometheus::core::{Collector, Desc, Describer, Number, Opts};
-use prometheus::proto;
+use prometheus::{
+	core::{Collector, Desc, Describer, Number, Opts},
+	proto,
+};
 use std::{cmp::Ordering, marker::PhantomData};
 
 /// A counter whose values are obtained from an existing source.
