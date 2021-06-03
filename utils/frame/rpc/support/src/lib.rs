@@ -47,13 +47,13 @@ use sp_storage::{StorageData, StorageKey};
 /// # type Hash = ();
 /// #
 /// # fn main() -> Result<(), RpcError> {
-/// #	tokio::runtime::Runtime::new().unwrap().block_on(test())
+/// #    tokio::runtime::Runtime::new().unwrap().block_on(test())
 /// # }
 /// #
 /// # struct TestRuntime;
 /// #
 /// # decl_module! {
-/// #	pub struct Module<T: Config> for enum Call where origin: T::Origin {}
+/// #    pub struct Module<T: Config> for enum Call where origin: T::Origin {}
 /// # }
 /// #
 /// pub type Loc = (i64, i64, i64);
