@@ -20,8 +20,9 @@
 
 #![warn(missing_docs)]
 
-use codec::{Decode, Encode};
 use std::{cmp::Reverse, fmt};
+
+use codec::{Decode, Encode};
 
 /// Error occurred when iterating with the tree.
 #[derive(Clone, Debug, PartialEq)]

@@ -20,14 +20,14 @@
 use core::convert::TryInto;
 use std::{collections::HashMap, fs, path::PathBuf};
 
-use inflector::Inflector;
-use serde::Serialize;
-
-use crate::BenchmarkCmd;
 use frame_benchmarking::{
 	Analysis, AnalysisChoice, BenchmarkBatch, BenchmarkSelector, RegressionModel,
 };
+use inflector::Inflector;
+use serde::Serialize;
 use sp_runtime::traits::Zero;
+
+use crate::BenchmarkCmd;
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 const TEMPLATE: &str = include_str!("./template.hbs");
@@ -411,8 +411,9 @@ where
 
 #[cfg(test)]
 mod test {
-	use super::*;
 	use frame_benchmarking::{BenchmarkBatch, BenchmarkParameter, BenchmarkResults};
+
+	use super::*;
 
 	fn test_data(
 		pallet: &[u8],

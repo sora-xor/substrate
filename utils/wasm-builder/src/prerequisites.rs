@@ -15,12 +15,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{write_file_if_changed, CargoCommand, CargoCommandVersioned};
-
 use std::{fs, path::Path};
 
 use ansi_term::Color;
 use tempfile::tempdir;
+
+use crate::{write_file_if_changed, CargoCommand, CargoCommandVersioned};
 
 /// Print an error message.
 fn print_error_message(message: &str) -> String {

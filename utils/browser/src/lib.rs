@@ -15,6 +15,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::pin::Pin;
+
+pub use console_error_panic_hook::set_once as set_console_error_panic_hook;
 use futures::{
 	channel::{mpsc, oneshot},
 	compat::*,
@@ -32,10 +35,7 @@ use sc_service::{
 	TaskManager, TransactionStorageMode,
 };
 use sc_tracing::logging::LoggerBuilder;
-use std::pin::Pin;
 use wasm_bindgen::prelude::*;
-
-pub use console_error_panic_hook::set_once as set_console_error_panic_hook;
 
 /// Initialize the logger and return a `TelemetryWorker` and a wasm `ExtTransport`.
 pub fn init_logging(pattern: &str) -> Result<(), sc_tracing::logging::Error> {

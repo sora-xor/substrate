@@ -15,8 +15,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use platforms::*;
 use std::{borrow::Cow, process::Command};
+
+use platforms::*;
 
 /// Generate the `cargo:` key output
 pub fn generate_cargo_keys() {

@@ -20,6 +20,7 @@
 use std::sync::Arc;
 
 use codec::{self, Codec, Decode, Encode};
+pub use frame_system_rpc_runtime_api::AccountNonceApi;
 use futures::future::{ready, TryFutureExt};
 use jsonrpc_core::{
 	futures::future::{self as rpc_future, result, Future},
@@ -35,7 +36,6 @@ use sp_runtime::{generic::BlockId, traits};
 use sp_transaction_pool::{InPoolTransaction, TransactionPool};
 
 pub use self::gen_client::Client as SystemClient;
-pub use frame_system_rpc_runtime_api::AccountNonceApi;
 
 /// Future that resolves to account nonce.
 pub type FutureResult<T> = Box<dyn Future<Item = T, Error = RpcError> + Send>;
@@ -275,8 +275,6 @@ where
 
 #[cfg(test)]
 mod tests {
-	use super::*;
-
 	use futures::executor::block_on;
 	use sc_transaction_pool::BasicPool;
 	use sp_runtime::{
@@ -284,6 +282,8 @@ mod tests {
 		ApplyExtrinsicResult,
 	};
 	use substrate_test_runtime_client::{runtime::Transfer, AccountKeyring};
+
+	use super::*;
 
 	#[test]
 	fn should_return_next_nonce_for_some_account() {

@@ -20,8 +20,9 @@
 
 #![warn(missing_docs)]
 
-use codec::{DecodeAll, FullCodec, FullEncode};
 use core::marker::PhantomData;
+
+use codec::{DecodeAll, FullCodec, FullEncode};
 use frame_support::storage::generator::{StorageDoubleMap, StorageMap, StorageValue};
 use futures::compat::Future01CompatExt;
 use jsonrpc_client_transports::RpcError;

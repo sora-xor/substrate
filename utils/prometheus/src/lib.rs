@@ -15,6 +15,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::net::SocketAddr;
+
 use futures_util::{future::Future, FutureExt};
 pub use prometheus::{
 	self,
@@ -26,16 +28,14 @@ pub use prometheus::{
 	Registry,
 };
 use prometheus::{core::Collector, Encoder, TextEncoder};
-use std::net::SocketAddr;
 
 #[cfg(not(target_os = "unknown"))]
 mod networking;
 mod sourced;
 
-pub use sourced::{MetricSource, SourcedCounter, SourcedGauge, SourcedMetric};
-
 #[cfg(not(target_os = "unknown"))]
 pub use known_os::init_prometheus;
+pub use sourced::{MetricSource, SourcedCounter, SourcedGauge, SourcedMetric};
 #[cfg(target_os = "unknown")]
 pub use unknown_os::init_prometheus;
 
@@ -61,12 +61,13 @@ mod unknown_os {
 
 #[cfg(not(target_os = "unknown"))]
 mod known_os {
-	use super::*;
 	use hyper::{
 		http::StatusCode,
 		service::{make_service_fn, service_fn},
 		Body, Request, Response, Server,
 	};
+
+	use super::*;
 
 	#[derive(Debug, derive_more::Display, derive_more::From)]
 	pub enum Error {

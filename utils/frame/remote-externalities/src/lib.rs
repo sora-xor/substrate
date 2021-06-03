@@ -20,6 +20,11 @@
 //! An equivalent of `sp_io::TestExternalities` that can load its state from a remote substrate
 //! based chain, or a local state snapshot file.
 
+use std::{
+	fs,
+	path::{Path, PathBuf},
+};
+
 use codec::{Decode, Encode};
 use jsonrpsee_ws_client::{traits::Client, v2::params::JsonRpcParams, WsClient, WsClientBuilder};
 use log::*;
@@ -30,10 +35,6 @@ use sp_core::{
 };
 pub use sp_io::TestExternalities;
 use sp_runtime::traits::Block as BlockT;
-use std::{
-	fs,
-	path::{Path, PathBuf},
-};
 
 type KeyPair = (StorageKey, StorageData);
 
@@ -457,8 +458,9 @@ impl<B: BlockT> Builder<B> {
 
 #[cfg(test)]
 mod test_prelude {
-	pub(crate) use super::*;
 	pub(crate) use sp_runtime::testing::{Block as RawBlock, ExtrinsicWrapper, H256 as Hash};
+
+	pub(crate) use super::*;
 
 	pub(crate) type Block = RawBlock<ExtrinsicWrapper<Hash>>;
 

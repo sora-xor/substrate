@@ -15,12 +15,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::task::{Context, Poll};
+
 use async_std::pin::Pin;
 use futures_util::{
 	io::{AsyncRead, AsyncWrite},
 	stream::Stream,
 };
-use std::task::{Context, Poll};
 
 pub struct Incoming<'a>(pub async_std::net::Incoming<'a>);
 

@@ -15,7 +15,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::BenchmarkCmd;
+use std::{fmt::Debug, sync::Arc};
+
 use codec::{Decode, Encode};
 use frame_benchmarking::{Analysis, BenchmarkBatch, BenchmarkSelector};
 use sc_cli::{CliConfiguration, ExecutionStrategy, Result, SharedParams};
@@ -27,7 +28,8 @@ use sp_externalities::Extensions;
 use sp_keystore::{testing::KeyStore, KeystoreExt, SyncCryptoStorePtr};
 use sp_runtime::traits::{Block as BlockT, Header as HeaderT, NumberFor};
 use sp_state_machine::StateMachine;
-use std::{fmt::Debug, sync::Arc};
+
+use crate::BenchmarkCmd;
 
 impl BenchmarkCmd {
 	/// Runs the command and benchmarks the chain.
