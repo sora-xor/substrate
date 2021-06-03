@@ -41,12 +41,8 @@ impl<E: std::error::Error> fmt::Display for Error<E> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		let message = match *self {
 			Error::Duplicate => "Hash already exists in Tree".into(),
-			Error::UnfinalizedAncestor => {
-				"Finalized descendent of Tree node without finalizing its ancestor(s) first".into()
-			}
-			Error::Revert => {
-				"Tried to import or finalize node that is an ancestor of a previously finalized node".into()
-			}
+			Error::UnfinalizedAncestor => "Finalized descendent of Tree node without finalizing its ancestor(s) first".into(),
+			Error::Revert => "Tried to import or finalize node that is an ancestor of a previously finalized node".into(),
 			Error::Client(ref err) => format!("Client error: {}", err),
 		};
 		write!(f, "{}", message)
@@ -1210,9 +1206,12 @@ mod test {
 		};
 
 		assert_eq!(
-			tree.finalizes_any_with_descendent_if(&"B", 2, &is_descendent_of, |c| c
-				.effective
-				<= 2,),
+			tree.finalizes_any_with_descendent_if(
+				&"B",
+				2,
+				&is_descendent_of,
+				|c| c.effective <= 2,
+			),
 			Ok(None),
 		);
 
@@ -1238,9 +1237,12 @@ mod test {
 
 		// finalizing "C" will finalize the node "A0" and prune it out of the tree
 		assert_eq!(
-			tree.finalizes_any_with_descendent_if(&"C", 5, &is_descendent_of, |c| c
-				.effective
-				<= 5,),
+			tree.finalizes_any_with_descendent_if(
+				&"C",
+				5,
+				&is_descendent_of,
+				|c| c.effective <= 5,
+			),
 			Ok(Some(true)),
 		);
 
