@@ -34,15 +34,15 @@ pub fn rerun_if_git_head_changed() {
 				eprintln!("cargo:warning=Unable to read the Git repository: {}", err);
 
 				return;
-			}
-			Ok(None) => {}
+			},
+			Ok(None) => {},
 			Ok(Some(paths)) => {
 				for p in paths {
 					println!("cargo:rerun-if-changed={}", p.display());
 				}
 
 				return;
-			}
+			},
 		}
 
 		manifest_dir.pop();

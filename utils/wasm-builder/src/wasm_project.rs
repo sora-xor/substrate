@@ -200,7 +200,7 @@ fn get_wasm_workspace_root() -> PathBuf {
 				if !out_dir.pop() {
 					break;
 				}
-			}
+			},
 		}
 	}
 
@@ -449,7 +449,7 @@ fn build_project(project: &Path, default_rustflags: &str, cargo_cmd: CargoComman
 	println!("{} {}", colorize_info_message("Using rustc version:"), cargo_cmd.rustc_version());
 
 	match build_cmd.status().map(|s| s.success()) {
-		Ok(true) => {}
+		Ok(true) => {},
 		// Use `process.exit(1)` to have a clean error output.
 		_ => process::exit(1),
 	}

@@ -145,7 +145,7 @@ fn check_wasm_toolchain_installed(
 			match String::from_utf8(s.stderr) {
 				Ok(ref err) if err.contains("linker `rust-lld` not found") => {
 					Err(print_error_message("`rust-lld` not found, please install it!"))
-				}
+				},
 				Ok(ref err) => Err(format!(
 					"{}\n\n{}\n{}\n{}{}\n",
 					err_msg,

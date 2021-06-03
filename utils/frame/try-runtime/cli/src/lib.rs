@@ -153,7 +153,7 @@ impl TryRuntimeCmd {
 					Builder::<B>::new().mode(Mode::Offline(OfflineConfig {
 						state_snapshot: SnapshotConfig::new(snapshot_path),
 					}))
-				}
+				},
 				State::Live { url, snapshot_path, block_at, modules } => {
 					Builder::<B>::new().mode(Mode::Online(OnlineConfig {
 						transport: url.to_owned().into(),
@@ -167,7 +167,7 @@ impl TryRuntimeCmd {
 							.transpose()?,
 						..Default::default()
 					}))
-				}
+				},
 			};
 
 			// inject the code into this ext.
