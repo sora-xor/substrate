@@ -15,24 +15,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::pin::Pin;
+
 use futures01::sync::mpsc as mpsc01;
 use log::{debug, info};
 use sc_network::config::TransportConfig;
 use sc_service::{
-	RpcSession, Role, Configuration, TaskManager, RpcHandlers,
 	config::{DatabaseConfig, KeystoreConfig, NetworkConfiguration},
-	GenericChainSpec, RuntimeGenesis,
-	KeepBlocks, TransactionStorageMode,
+	Configuration, GenericChainSpec, KeepBlocks, Role, RpcHandlers, RpcSession, RuntimeGenesis,
+	TaskManager, TransactionStorageMode,
 };
 use sc_tracing::logging::LoggerBuilder;
 use wasm_bindgen::prelude::*;
 use futures::{
-	prelude::*, channel::{oneshot, mpsc}, compat::*, future::{ready, ok, select}
+	channel::{mpsc, oneshot},
+	compat::*,
+	future::{ok, ready, select},
+	prelude::*,
 };
-use std::pin::Pin;
 use sc_chain_spec::Extension;
-use libp2p_wasm_ext::{ExtTransport, ffi};
-
+use libp2p_wasm_ext::{ffi, ExtTransport};
 pub use console_error_panic_hook::set_once as set_console_error_panic_hook;
 
 /// Initialize the logger and return a `TelemetryWorker` and a wasm `ExtTransport`.
@@ -73,7 +75,8 @@ where
 		task_executor: (|fut, _| {
 			wasm_bindgen_futures::spawn_local(fut);
 			async {}
-		}).into(),
+		})
+		.into(),
 		telemetry_external_transport: Some(transport),
 		role: Role::Light,
 		database: {
@@ -112,9 +115,7 @@ where
 		max_runtime_instances: 8,
 		announce_block: true,
 		base_path: None,
-		informant_output_format: sc_informant::OutputFormat {
-			enable_color: false,
-		},
+		informant_output_format: sc_informant::OutputFormat { enable_color: false },
 		disable_log_reloading: false,
 	};
 
@@ -151,12 +152,11 @@ pub fn start_client(mut task_manager: TaskManager, rpc_handlers: RpcHandlers) ->
 			Box::pin(async move {
 				let _ = task_manager.future().await;
 			}),
-		).map(drop)
+		)
+		.map(drop),
 	);
 
-	Client {
-		rpc_send_tx,
-	}
+	Client { rpc_send_tx }
 }
 
 #[wasm_bindgen]
@@ -173,12 +173,8 @@ impl Client {
 		});
 		wasm_bindgen_futures::future_to_promise(async {
 			match rx.await {
-				Ok(fut) => {
-					fut.await
-						.map(|s| JsValue::from_str(&s))
-						.ok_or_else(|| JsValue::NULL)
-				},
-				Err(_) => Err(JsValue::NULL)
+				Ok(fut) => fut.await.map(|s| JsValue::from_str(&s)).ok_or_else(|| JsValue::NULL),
+				Err(_) => Err(JsValue::NULL),
 			}
 		})
 	}
@@ -201,7 +197,8 @@ impl Client {
 		});
 
 		wasm_bindgen_futures::spawn_local(async move {
-			let _ = rx.compat()
+			let _ = rx
+				.compat()
 				.try_for_each(|s| {
 					let _ = callback.call1(&callback, &JsValue::from_str(&s));
 					ok(())
