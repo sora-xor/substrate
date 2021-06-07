@@ -33,11 +33,11 @@ use prometheus::{core::Collector, Encoder, TextEncoder};
 mod networking;
 mod sourced;
 
-#[cfg(not(target_os = "unknown"))]
-pub use known_os::init_prometheus;
 pub use sourced::{MetricSource, SourcedCounter, SourcedGauge, SourcedMetric};
 #[cfg(target_os = "unknown")]
 pub use unknown_os::init_prometheus;
+#[cfg(not(target_os = "unknown"))]
+pub use known_os::init_prometheus;
 
 pub fn register<T: Clone + Collector + 'static>(
 	metric: T,
@@ -61,8 +61,8 @@ mod unknown_os {
 
 #[cfg(not(target_os = "unknown"))]
 mod known_os {
+	use hyper::http::StatusCode;
 	use hyper::{
-		http::StatusCode,
 		service::{make_service_fn, service_fn},
 		Body, Request, Response, Server,
 	};

@@ -17,14 +17,16 @@
 
 // Outputs benchmark results to Rust files that can be ingested by the runtime.
 
+use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 use core::convert::TryInto;
-use std::{collections::HashMap, fs, path::PathBuf};
 
+use serde::Serialize;
+use inflector::Inflector;
 use frame_benchmarking::{
 	Analysis, AnalysisChoice, BenchmarkBatch, BenchmarkSelector, RegressionModel,
 };
-use inflector::Inflector;
-use serde::Serialize;
 use sp_runtime::traits::Zero;
 
 use crate::BenchmarkCmd;

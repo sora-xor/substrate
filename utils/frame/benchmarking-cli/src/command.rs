@@ -15,19 +15,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{fmt::Debug, sync::Arc};
+use std::sync::Arc;
+use std::fmt::Debug;
 
 use codec::{Decode, Encode};
 use frame_benchmarking::{Analysis, BenchmarkBatch, BenchmarkSelector};
 use sc_cli::{CliConfiguration, ExecutionStrategy, Result, SharedParams};
 use sc_client_db::BenchmarkingState;
 use sc_executor::NativeExecutor;
-use sc_service::{Configuration, NativeExecutionDispatch};
-use sp_core::offchain::{testing::TestOffchainExt, OffchainWorkerExt};
-use sp_externalities::Extensions;
-use sp_keystore::{testing::KeyStore, KeystoreExt, SyncCryptoStorePtr};
-use sp_runtime::traits::{Block as BlockT, Header as HeaderT, NumberFor};
 use sp_state_machine::StateMachine;
+use sp_externalities::Extensions;
+use sc_service::{Configuration, NativeExecutionDispatch};
+use sp_runtime::traits::{Block as BlockT, Header as HeaderT, NumberFor};
+use sp_core::offchain::{testing::TestOffchainExt, OffchainWorkerExt};
+use sp_keystore::{testing::KeyStore, KeystoreExt, SyncCryptoStorePtr};
 
 use crate::BenchmarkCmd;
 

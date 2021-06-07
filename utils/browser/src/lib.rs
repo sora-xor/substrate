@@ -17,17 +17,8 @@
 
 use std::pin::Pin;
 
-pub use console_error_panic_hook::set_once as set_console_error_panic_hook;
-use futures::{
-	channel::{mpsc, oneshot},
-	compat::*,
-	future::{ok, ready, select},
-	prelude::*,
-};
 use futures01::sync::mpsc as mpsc01;
-use libp2p_wasm_ext::{ffi, ExtTransport};
 use log::{debug, info};
-use sc_chain_spec::Extension;
 use sc_network::config::TransportConfig;
 use sc_service::{
 	config::{DatabaseConfig, KeystoreConfig, NetworkConfiguration},
@@ -36,6 +27,15 @@ use sc_service::{
 };
 use sc_tracing::logging::LoggerBuilder;
 use wasm_bindgen::prelude::*;
+use futures::{
+	channel::{mpsc, oneshot},
+	compat::*,
+	future::{ok, ready, select},
+	prelude::*,
+};
+use sc_chain_spec::Extension;
+use libp2p_wasm_ext::{ffi, ExtTransport};
+pub use console_error_panic_hook::set_once as set_console_error_panic_hook;
 
 /// Initialize the logger and return a `TelemetryWorker` and a wasm `ExtTransport`.
 pub fn init_logging(pattern: &str) -> Result<(), sc_tracing::logging::Error> {

@@ -19,10 +19,8 @@
 
 use std::{cmp::Ordering, marker::PhantomData};
 
-use prometheus::{
-	core::{Collector, Desc, Describer, Number, Opts},
-	proto,
-};
+use prometheus::core::{Collector, Desc, Describer, Number, Opts};
+use prometheus::proto;
 
 /// A counter whose values are obtained from an existing source.
 ///

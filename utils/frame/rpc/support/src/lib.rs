@@ -22,13 +22,13 @@
 
 use core::marker::PhantomData;
 
-use codec::{DecodeAll, FullCodec, FullEncode};
-use frame_support::storage::generator::{StorageDoubleMap, StorageMap, StorageValue};
 use futures::compat::Future01CompatExt;
 use jsonrpc_client_transports::RpcError;
-use sc_rpc_api::state::StateClient;
+use codec::{DecodeAll, FullCodec, FullEncode};
 use serde::{de::DeserializeOwned, Serialize};
+use frame_support::storage::generator::{StorageDoubleMap, StorageMap, StorageValue};
 use sp_storage::{StorageData, StorageKey};
+use sc_rpc_api::state::StateClient;
 
 /// A typed query on chain state usable from an RPC client.
 ///
@@ -47,13 +47,13 @@ use sp_storage::{StorageData, StorageKey};
 /// # type Hash = ();
 /// #
 /// # fn main() -> Result<(), RpcError> {
-/// #    tokio::runtime::Runtime::new().unwrap().block_on(test())
+/// #     tokio::runtime::Runtime::new().unwrap().block_on(test())
 /// # }
 /// #
 /// # struct TestRuntime;
 /// #
 /// # decl_module! {
-/// #    pub struct Module<T: Config> for enum Call where origin: T::Origin {}
+/// 	#     pub struct Module<T: Config> for enum Call where origin: T::Origin {}
 /// # }
 /// #
 /// pub type Loc = (i64, i64, i64);

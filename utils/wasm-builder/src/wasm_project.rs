@@ -25,9 +25,9 @@ use std::{
 	process,
 };
 
+use toml::value::Table;
 use build_helper::rerun_if_changed;
 use cargo_metadata::{Metadata, MetadataCommand};
-use toml::value::Table;
 use walkdir::WalkDir;
 
 use crate::{write_file_if_changed, CargoCommandVersioned};

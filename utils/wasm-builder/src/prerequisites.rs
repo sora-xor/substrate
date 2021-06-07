@@ -17,8 +17,8 @@
 
 use std::{fs, path::Path};
 
-use ansi_term::Color;
 use tempfile::tempdir;
+use ansi_term::Color;
 
 use crate::{write_file_if_changed, CargoCommand, CargoCommandVersioned};
 

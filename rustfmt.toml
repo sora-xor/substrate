@@ -3,7 +3,6 @@ use_small_heuristics = "Max"
 max_width = 100
 comment_width = 100
 chain_width = 80
-imports_granularity = "Crate"
 spaces_around_ranges = true
 binop_separator = "Back"
 newline_style = "Unix"
@@ -13,3 +12,7 @@ reorder_impl_items = true
 use_field_init_shorthand = true
 group_imports = "StdExternalCrate"
 match_block_trailing_comma = true
+
+# Todo: re-enable import reordering
+# imports_granularity = "Crate"
+reorder_imports = false
