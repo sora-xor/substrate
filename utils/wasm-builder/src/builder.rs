@@ -233,7 +233,7 @@ fn build_project(
 		Err(err_msg) => {
 			eprintln!("{}", err_msg);
 			process::exit(1);
-		},
+		}
 	};
 
 	let (wasm_binary, bloaty) = crate::wasm_project::create_and_compile(

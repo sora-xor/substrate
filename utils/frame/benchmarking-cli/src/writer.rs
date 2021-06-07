@@ -264,7 +264,7 @@ pub fn write_results(
 		Some(header_file) => {
 			let text = fs::read_to_string(header_file)?;
 			text
-		},
+		}
 		None => String::new(),
 	};
 

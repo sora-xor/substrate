@@ -227,11 +227,11 @@ where
 					hash = h;
 					number = n;
 					data = d;
-				},
+				}
 				None => {
 					self.rebalance();
 					return Ok(false);
-				},
+				}
 			}
 		}
 
@@ -707,7 +707,7 @@ mod node_implementation {
 						hash = h;
 						number = n;
 						data = d;
-					},
+					}
 					None => return Ok(None),
 				}
 			}
@@ -757,15 +757,15 @@ mod node_implementation {
 					FindOutcome::Found(mut x) => {
 						x.push(i);
 						return Ok(FindOutcome::Found(x));
-					},
+					}
 					FindOutcome::Failure(true) => {
 						// if the block was a descendent of this child,
 						// then it cannot be a descendent of any others,
 						// so we don't search them.
 						known_descendent_of = true;
 						break;
-					},
-					FindOutcome::Failure(false) => {},
+					}
+					FindOutcome::Failure(false) => {}
 				}
 			}
 
@@ -815,7 +815,7 @@ mod node_implementation {
 						cur = &cur.children[i];
 					}
 					Ok(FindOutcome::Found(cur))
-				},
+				}
 			}
 		}
 
@@ -848,7 +848,7 @@ mod node_implementation {
 						cur = &mut cur.children[i];
 					}
 					Ok(FindOutcome::Found(cur))
-				},
+				}
 			}
 		}
 	}
@@ -941,7 +941,7 @@ mod test {
 				("E", _) => Ok(false),
 				("F", b) => {
 					Ok(b == "G" || b == "H" || b == "I" || b == "L" || b == "M" || b == "O")
-				},
+				}
 				("G", _) => Ok(false),
 				("H", b) => Ok(b == "I" || b == "L" || b == "M" || b == "O"),
 				("I", _) => Ok(false),

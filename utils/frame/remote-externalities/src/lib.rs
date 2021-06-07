@@ -402,7 +402,7 @@ impl<B: BlockT> Builder<B> {
 					self.save_state_snapshot(&kp, &c.path)?;
 				}
 				kp
-			},
+			}
 		};
 
 		info!(
