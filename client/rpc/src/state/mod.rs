@@ -26,7 +26,7 @@ mod tests;
 
 use std::sync::Arc;
 use jsonrpc_pubsub::{typed::Subscriber, SubscriptionId, manager::SubscriptionManager};
-use rpc::{Result as RpcResult, futures::{Future, future::result}};
+use futures::future::ready;
 
 use sc_rpc_api::{DenyUnsafe, state::ReadProof};
 use sc_client_api::light::{RemoteBlockchain, Fetcher};
@@ -151,7 +151,7 @@ pub trait StateBackend<Block: BlockT, Client>: Send + Sync + 'static
 		&self,
 		_meta: Option<crate::Metadata>,
 		id: SubscriptionId,
-	) -> RpcResult<bool>;
+	) -> rpc::Result<bool>;
 
 	/// New storage subscription
 	fn subscribe_storage(
@@ -166,7 +166,7 @@ pub trait StateBackend<Block: BlockT, Client>: Send + Sync + 'static
 		&self,
 		_meta: Option<crate::Metadata>,
 		id: SubscriptionId,
-	) -> RpcResult<bool>;
+	) -> rpc::Result<bool>;
 
 	/// Trace storage changes for block
 	fn trace_block(
@@ -264,7 +264,7 @@ impl<Block, Client> StateApi<Block::Hash> for State<Block, Client>
 		block: Option<Block::Hash>,
 	) -> FutureResult<Vec<(StorageKey, StorageData)>> {
 		if let Err(err) = self.deny_unsafe.check_if_safe() {
-			return Box::new(result(Err(err.into())))
+			return Box::pin(ready(Err(err.into())))
 		}
 
 		self.backend.storage_pairs(block, key_prefix)
@@ -278,7 +278,7 @@ impl<Block, Client> StateApi<Block::Hash> for State<Block, Client>
 		block: Option<Block::Hash>,
 	) -> FutureResult<Vec<StorageKey>> {
 		if count > STORAGE_KEYS_PAGED_MAX_COUNT {
-			return Box::new(result(Err(
+			return Box::pin(ready(Err(
 				Error::InvalidCount {
 					value: count,
 					max: STORAGE_KEYS_PAGED_MAX_COUNT,
@@ -311,7 +311,7 @@ impl<Block, Client> StateApi<Block::Hash> for State<Block, Client>
 		to: Option<Block::Hash>
 	) -> FutureResult<Vec<StorageChangeSet<Block::Hash>>> {
 		if let Err(err) = self.deny_unsafe.check_if_safe() {
-			return Box::new(result(Err(err.into())))
+			return Box::pin(ready(Err(err.into())))
 		}
 
 		self.backend.query_storage(from, to, keys)
@@ -338,7 +338,8 @@ impl<Block, Client> StateApi<Block::Hash> for State<Block, Client>
 		self.backend.subscribe_storage(meta, subscriber, keys);
 	}
 
-	fn unsubscribe_storage(&self, meta: Option<Self::Metadata>, id: SubscriptionId) -> RpcResult<bool> {
+	fn unsubscribe_storage(&self, meta: Option<Self::Metadata>, id: SubscriptionId) ->
+		rpc::Result<bool> {
 		self.backend.unsubscribe_storage(meta, id)
 	}
 
@@ -354,7 +355,7 @@ impl<Block, Client> StateApi<Block::Hash> for State<Block, Client>
 		&self,
 		meta: Option<Self::Metadata>,
 		id: SubscriptionId,
-	) -> RpcResult<bool> {
+	) -> rpc::Result<bool> {
 		self.backend.unsubscribe_runtime_version(meta, id)
 	}
 
@@ -369,7 +370,7 @@ impl<Block, Client> StateApi<Block::Hash> for State<Block, Client>
 		storage_keys: Option<String>
 	) -> FutureResult<sp_rpc::tracing::TraceBlockResponse> {
 		if let Err(err) = self.deny_unsafe.check_if_safe() {
-			return Box::new(result(Err(err.into())))
+			return Box::pin(ready(Err(err.into())))
 		}
 
 		self.backend.trace_block(block, targets, storage_keys)

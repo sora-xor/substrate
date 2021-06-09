@@ -25,12 +25,8 @@ mod chain_light;
 mod tests;
 
 use std::sync::Arc;
-use futures::{future, StreamExt, TryStreamExt};
+use futures::{future, stream, Stream, StreamExt, TryStreamExt};
 use log::warn;
-use rpc::{
-	Result as RpcResult,
-	futures::{stream, Future, Sink, Stream},
-};
 
 use sc_client_api::{BlockchainEvents, light::{Fetcher, RemoteBlockchain}};
 use jsonrpc_pubsub::{typed::Subscriber, SubscriptionId, manager::SubscriptionManager};
@@ -40,7 +36,7 @@ use sp_runtime::{
 	traits::{Block as BlockT, Header, NumberFor},
 };
 
-use self::error::{Result, Error, FutureResult};
+use self::error::{Result as ChainResult, Error, FutureResult};
 
 pub use sc_rpc_api::chain::*;
 use sp_blockchain::HeaderBackend;
@@ -75,7 +71,7 @@ trait ChainBackend<Client, Block: BlockT>: Send + Sync + 'static
 	/// Get hash of the n-th block in the canon chain.
 	///
 	/// By default returns latest block hash.
-	fn block_hash(&self, number: Option<NumberOrHex>) -> Result<Option<Block::Hash>> {
+	fn block_hash(&self, number: Option<NumberOrHex>) -> ChainResult<Option<Block::Hash>> {
 		match number {
 			None => Ok(Some(self.client().info().best_hash)),
 			Some(num_or_hex) => {
@@ -99,7 +95,7 @@ trait ChainBackend<Client, Block: BlockT>: Send + Sync + 'static
 	}
 
 	/// Get hash of the last finalized block in the canon chain.
-	fn finalized_head(&self) -> Result<Block::Hash> {
+	fn finalized_head(&self) -> ChainResult<Block::Hash> {
 		Ok(self.client().info().finalized_hash)
 	}
 
@@ -125,7 +121,7 @@ trait ChainBackend<Client, Block: BlockT>: Send + Sync + 'static
 		&self,
 		_metadata: Option<crate::Metadata>,
 		id: SubscriptionId,
-	) -> RpcResult<bool> {
+	) -> rpc::Result<bool> {
 		Ok(self.subscriptions().cancel(id))
 	}
 
@@ -152,7 +148,7 @@ trait ChainBackend<Client, Block: BlockT>: Send + Sync + 'static
 		&self,
 		_metadata: Option<crate::Metadata>,
 		id: SubscriptionId,
-	) -> RpcResult<bool> {
+	) -> rpc::Result<bool> {
 		Ok(self.subscriptions().cancel(id))
 	}
 
@@ -178,7 +174,7 @@ trait ChainBackend<Client, Block: BlockT>: Send + Sync + 'static
 		&self,
 		_metadata: Option<crate::Metadata>,
 		id: SubscriptionId,
-	) -> RpcResult<bool> {
+	) -> rpc::Result<bool> {
 		Ok(self.subscriptions().cancel(id))
 	}
 }
@@ -244,19 +240,19 @@ impl<Block, Client> ChainApi<NumberFor<Block>, Block::Hash, Block::Header, Signe
 	fn block_hash(
 		&self,
 		number: Option<ListOrValue<NumberOrHex>>,
-	) -> Result<ListOrValue<Option<Block::Hash>>> {
+	) -> ChainResult<ListOrValue<Option<Block::Hash>>> {
 		match number {
 			None => self.backend.block_hash(None).map(ListOrValue::Value),
 			Some(ListOrValue::Value(number)) => self.backend.block_hash(Some(number)).map(ListOrValue::Value),
 			Some(ListOrValue::List(list)) => Ok(ListOrValue::List(list
 				.into_iter()
 				.map(|number| self.backend.block_hash(Some(number)))
-				.collect::<Result<_>>()?
+				.collect::<ChainResult<_>>()?
 			))
 		}
 	}
 
-	fn finalized_head(&self) -> Result<Block::Hash> {
+	fn finalized_head(&self) -> ChainResult<Block::Hash> {
 		self.backend.finalized_head()
 	}
 
@@ -264,7 +260,7 @@ impl<Block, Client> ChainApi<NumberFor<Block>, Block::Hash, Block::Header, Signe
 		self.backend.subscribe_all_heads(metadata, subscriber)
 	}
 
-	fn unsubscribe_all_heads(&self, metadata: Option<Self::Metadata>, id: SubscriptionId) -> RpcResult<bool> {
+	fn unsubscribe_all_heads(&self, metadata: Option<Self::Metadata>, id: SubscriptionId) -> rpc::Result<bool> {
 		self.backend.unsubscribe_all_heads(metadata, id)
 	}
 
@@ -272,7 +268,7 @@ impl<Block, Client> ChainApi<NumberFor<Block>, Block::Hash, Block::Header, Signe
 		self.backend.subscribe_new_heads(metadata, subscriber)
 	}
 
-	fn unsubscribe_new_heads(&self, metadata: Option<Self::Metadata>, id: SubscriptionId) -> RpcResult<bool> {
+	fn unsubscribe_new_heads(&self, metadata: Option<Self::Metadata>, id: SubscriptionId) -> rpc::Result<bool> {
 		self.backend.unsubscribe_new_heads(metadata, id)
 	}
 
@@ -280,7 +276,7 @@ impl<Block, Client> ChainApi<NumberFor<Block>, Block::Hash, Block::Header, Signe
 		self.backend.subscribe_finalized_heads(metadata, subscriber)
 	}
 
-	fn unsubscribe_finalized_heads(&self, metadata: Option<Self::Metadata>, id: SubscriptionId) -> RpcResult<bool> {
+	fn unsubscribe_finalized_heads(&self, metadata: Option<Self::Metadata>, id: SubscriptionId) -> rpc::Result<bool> {
 		self.backend.unsubscribe_finalized_heads(metadata, id)
 	}
 }
@@ -298,7 +294,7 @@ fn subscribe_headers<Block, Client, F, G, S, ERR>(
 	F: FnOnce() -> S,
 	G: FnOnce() -> Block::Hash,
 	ERR: ::std::fmt::Debug,
-	S: Stream<Item=Block::Header, Error=ERR> + Send + 'static,
+	S: Stream<Item=Result<Block::Header, ERR>> + Send + 'static,
 {
 	subscriptions.add(subscriber, |sink| {
 		// send current head right at the start.
@@ -317,7 +313,7 @@ fn subscribe_headers<Block, Client, F, G, S, ERR>(
 		sink
 			.sink_map_err(|e| warn!("Error sending notifications: {:?}", e))
 			.send_all(
-				stream::iter_result(vec![Ok(header)])
+				stream::iter(vec![Ok(header)])
 					.chain(stream)
 			)
 			// we ignore the resulting Stream (if the first stream is over we are unsubscribed)

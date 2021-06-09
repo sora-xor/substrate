@@ -19,8 +19,7 @@
 //! Blockchain API backend for light nodes.
 
 use std::sync::Arc;
-use futures::{future::ready, FutureExt, TryFutureExt};
-use rpc::futures::future::{result, Future, Either};
+use futures::{FutureExt, TryFutureExt, future::{ready, Either}};
 use jsonrpc_pubsub::manager::SubscriptionManager;
 
 use sc_client_api::light::{Fetcher, RemoteBodyRequest, RemoteBlockchain};
@@ -86,9 +85,9 @@ impl<Block, Client, F> ChainBackend<Client, Block> for LightChain<Block, Client,
 			BlockId::Hash(hash),
 		);
 
-		Box::new(maybe_header.then(move |result|
+		Box::pin(maybe_header.then(move |result|
 			ready(result.map_err(client_err)),
-		).boxed().compat())
+		))
 	}
 
 	fn block(&self, hash: Option<Block::Hash>)
@@ -102,17 +101,15 @@ impl<Block, Client, F> ChainBackend<Client, Block> for LightChain<Block, Client,
 						header: header.clone(),
 						retry_count: Default::default(),
 					})
-					.boxed()
-					.compat()
 					.map(move |body| Some(SignedBlock {
 						block: Block::new(header, body),
 						justifications: None,
 					}))
 					.map_err(client_err)
 				),
-				None => Either::B(result(Ok(None))),
+				None => Either::B(ready(Ok(None))),
 			});
 
-		Box::new(block)
+		Box::pin(block)
 	}
 }

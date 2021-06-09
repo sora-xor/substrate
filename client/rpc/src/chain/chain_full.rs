@@ -19,7 +19,7 @@
 //! Blockchain API backend for full nodes.
 
 use std::sync::Arc;
-use rpc::futures::future::result;
+use rpc::futures::future::ready;
 use jsonrpc_pubsub::manager::SubscriptionManager;
 
 use sc_client_api::{BlockchainEvents, BlockBackend};
@@ -63,7 +63,7 @@ impl<Block, Client> ChainBackend<Client, Block> for FullChain<Block, Client> whe
 	}
 
 	fn header(&self, hash: Option<Block::Hash>) -> FutureResult<Option<Block::Header>> {
-		Box::new(result(self.client
+		Box::pin(ready(self.client
 			.header(BlockId::Hash(self.unwrap_or_best(hash)))
 			.map_err(client_err)
 		))
@@ -72,7 +72,7 @@ impl<Block, Client> ChainBackend<Client, Block> for FullChain<Block, Client> whe
 	fn block(&self, hash: Option<Block::Hash>)
 		-> FutureResult<Option<SignedBlock<Block>>>
 	{
-		Box::new(result(self.client
+		Box::pin(ready(self.client
 			.block(&BlockId::Hash(self.unwrap_or_best(hash)))
 			.map_err(client_err)
 		))

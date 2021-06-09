@@ -26,8 +26,7 @@ use log::warn;
 
 use sp_blockchain::HeaderBackend;
 
-use rpc::futures::{Sink, Future, future::result};
-use futures::{StreamExt as _, compat::Compat};
+use futures::{StreamExt, SinkExt};
 use futures::future::{ready, FutureExt, TryFutureExt};
 use sc_rpc_api::DenyUnsafe;
 use jsonrpc_pubsub::{typed::Subscriber, SubscriptionId, manager::SubscriptionManager};
@@ -141,12 +140,11 @@ impl<P, Client> AuthorApi<TxHash<P>, BlockHash<P>> for Author<P, Client>
 	fn submit_extrinsic(&self, ext: Bytes) -> FutureResult<TxHash<P>> {
 		let xt = match Decode::decode(&mut &ext[..]) {
 			Ok(xt) => xt,
-			Err(err) => return Box::new(result(Err(err.into()))),
+			Err(err) => return Box::pin(ready(Err(err.into()))),
 		};
 		let best_block_hash = self.client.info().best_hash;
-		Box::new(self.pool
+		Box::pin(self.pool
 			.submit_one(&generic::BlockId::hash(best_block_hash), TX_SOURCE, xt)
-			.compat()
 			.map_err(|e| e.into_pool_error()
 				.map(Into::into)
 				.unwrap_or_else(|e| error::Error::Verification(Box::new(e)).into()))
@@ -211,10 +209,11 @@ impl<P, Client> AuthorApi<TxHash<P>, BlockHash<P>> for Author<P, Client>
 			.map(move |result| match result {
 				Ok(watcher) => {
 					subscriptions.add(subscriber, move |sink| {
-						sink
+						watcher.forward(sink
 							.sink_map_err(|e| log::debug!("Subscription sink failed: {:?}", e))
-							.send_all(Compat::new(watcher))
-							.map(|_| ())
+						)
+						// TODO [ToDr] Ingoring Result?
+						.map(|_| ())
 					});
 				},
 				Err(err) => {
@@ -225,7 +224,7 @@ impl<P, Client> AuthorApi<TxHash<P>, BlockHash<P>> for Author<P, Client>
 			});
 
 		let res = self.subscriptions.executor()
-			.execute(Box::new(Compat::new(future.map(|_| Ok(())))));
+			.spawn_obj(Box::pin(future.map(|_| ())).into());
 		if res.is_err() {
 			warn!("Error spawning subscription RPC task.");
 		}
