@@ -17,36 +17,24 @@
 
 //! `Structopt`-ready structs for `try-runtime`.
 
-<<<<<<< HEAD
-use std::{fmt::Debug, path::PathBuf, str::FromStr};
+use std::{fmt::Debug, path::PathBuf, str::FromStr, sync::Arc};
 
-use parity_scale_codec::Decode;
+use parity_scale_codec::{Decode, Encode};
+use remote_externalities::{rpc_api, Builder, Mode, OfflineConfig, OnlineConfig, SnapshotConfig};
+use sc_chain_spec::ChainSpec;
 use sc_cli::{CliConfiguration, ExecutionStrategy, WasmExecutionMethod};
 use sc_executor::NativeExecutor;
 use sc_service::{Configuration, NativeExecutionDispatch};
-use sp_core::storage::{well_known_keys, StorageData, StorageKey};
-use sp_runtime::traits::{Block as BlockT, NumberFor};
-use sp_state_machine::StateMachine;
-=======
-use parity_scale_codec::{Decode, Encode};
-use std::{fmt::Debug, path::PathBuf, str::FromStr, sync::Arc};
-use sc_service::Configuration;
-use sc_cli::{CliConfiguration, ExecutionStrategy, WasmExecutionMethod};
-use sc_executor::NativeExecutor;
-use sc_service::NativeExecutionDispatch;
-use sc_chain_spec::ChainSpec;
-use sp_state_machine::StateMachine;
-use sp_runtime::traits::{Block as BlockT, NumberFor};
 use sp_core::{
 	offchain::{
-		OffchainWorkerExt, OffchainDbExt, TransactionPoolExt,
-		testing::{TestOffchainExt, TestTransactionPoolExt}
+		testing::{TestOffchainExt, TestTransactionPoolExt},
+		OffchainDbExt, OffchainWorkerExt, TransactionPoolExt,
 	},
-	storage::{StorageData, StorageKey, well_known_keys},
+	storage::{well_known_keys, StorageData, StorageKey},
 };
-use sp_keystore::{KeystoreExt, testing::KeyStore};
-use remote_externalities::{Builder, Mode, SnapshotConfig, OfflineConfig, OnlineConfig, rpc_api};
->>>>>>> origin/master
+use sp_keystore::{testing::KeyStore, KeystoreExt};
+use sp_runtime::traits::{Block as BlockT, NumberFor};
+use sp_state_machine::StateMachine;
 
 mod parse;
 
@@ -126,18 +114,11 @@ pub struct TryRuntimeCmd {
 /// The source of runtime state to try operations against.
 #[derive(Debug, Clone, structopt::StructOpt)]
 pub enum State {
-<<<<<<< HEAD
-	/// Use a state snapshot as state to run the migration.
-	Snap { snapshot_path: PathBuf },
-=======
 	/// Use a state snapshot as the source of runtime state. NOTE: for the offchain-worker command this
 	/// is only partially supported at the moment and you must have a relevant archive node exposed on
 	/// localhost:9944 in order to query the block header.
 	// TODO https://github.com/paritytech/substrate/issues/9027
-	Snap {
-		snapshot_path: PathBuf,
-	},
->>>>>>> origin/master
+	Snap { snapshot_path: PathBuf },
 
 	/// Use a live chain as the source of runtime state.
 	Live {
@@ -160,21 +141,10 @@ pub enum State {
 	},
 }
 
-<<<<<<< HEAD
-fn parse_hash(block_number: &str) -> Result<String, String> {
-	let block_number =
-		if block_number.starts_with("0x") { &block_number[2 ..] } else { block_number };
-
-	if let Some(pos) = block_number.chars().position(|c| !c.is_ascii_hexdigit()) {
-		Err(format!("Expected block hash, found illegal hex character at position: {}", 2 + pos,))
-	} else {
-		Ok(block_number.into())
-	}
-=======
 async fn on_runtime_upgrade<Block, ExecDispatch>(
 	shared: SharedParams,
 	command: OnRuntimeUpgradeCmd,
-	config: Configuration
+	config: Configuration,
 ) -> sc_cli::Result<()>
 where
 	Block: BlockT,
@@ -186,19 +156,13 @@ where
 {
 	let wasm_method = shared.wasm_method;
 	let execution = shared.execution;
-	let heap_pages = if shared.heap_pages.is_some() {
-		shared.heap_pages
-	} else {
-		config.default_heap_pages
-	};
+	let heap_pages =
+		if shared.heap_pages.is_some() { shared.heap_pages } else { config.default_heap_pages };
 
 	let mut changes = Default::default();
 	let max_runtime_instances = config.max_runtime_instances;
-	let executor = NativeExecutor::<ExecDispatch>::new(
-		wasm_method.into(),
-		heap_pages,
-		max_runtime_instances,
-	);
+	let executor =
+		NativeExecutor::<ExecDispatch>::new(wasm_method.into(), heap_pages, max_runtime_instances);
 
 	let ext = {
 		let builder = match command.state {
@@ -206,20 +170,19 @@ where
 				Builder::<Block>::new().mode(Mode::Offline(OfflineConfig {
 					state_snapshot: SnapshotConfig::new(snapshot_path),
 				}))
-			},
-			State::Live {
-				url,
-				snapshot_path,
-				block_at,
-				modules
-			} => Builder::<Block>::new().mode(Mode::Online(OnlineConfig {
-				transport: url.to_owned().into(),
-				state_snapshot: snapshot_path.as_ref().map(SnapshotConfig::new),
-				modules: modules.to_owned().unwrap_or_default(),
-				at: block_at.as_ref()
-					.map(|b| b.parse().map_err(|e| format!("Could not parse hash: {:?}", e))).transpose()?,
-				..Default::default()
-			})),
+			}
+			State::Live { url, snapshot_path, block_at, modules } => {
+				Builder::<Block>::new().mode(Mode::Online(OnlineConfig {
+					transport: url.to_owned().into(),
+					state_snapshot: snapshot_path.as_ref().map(SnapshotConfig::new),
+					modules: modules.to_owned().unwrap_or_default(),
+					at: block_at
+						.as_ref()
+						.map(|b| b.parse().map_err(|e| format!("Could not parse hash: {:?}", e)))
+						.transpose()?,
+					..Default::default()
+				}))
+			}
 		};
 
 		let (code_key, code) = extract_code(config.chain_spec)?;
@@ -234,8 +197,7 @@ where
 		"TryRuntime_on_runtime_upgrade",
 		&[],
 		ext.extensions,
-		&sp_state_machine::backend::BackendRuntimeCode::new(&ext.backend)
-			.runtime_code()?,
+		&sp_state_machine::backend::BackendRuntimeCode::new(&ext.backend).runtime_code()?,
 		sp_core::testing::TaskExecutor::new(),
 	)
 	.execute(execution.into())
@@ -251,14 +213,13 @@ where
 	);
 
 	Ok(())
->>>>>>> origin/master
 }
 
 async fn offchain_worker<Block, ExecDispatch>(
 	shared: SharedParams,
 	command: OffchainWorkerCmd,
 	config: Configuration,
-)-> sc_cli::Result<()>
+) -> sc_cli::Result<()>
 where
 	Block: BlockT,
 	Block::Hash: FromStr,
@@ -270,114 +231,41 @@ where
 {
 	let wasm_method = shared.wasm_method;
 	let execution = shared.execution;
-	let heap_pages = if shared.heap_pages.is_some() {
-		shared.heap_pages
-	} else {
-		config.default_heap_pages
-	};
+	let heap_pages =
+		if shared.heap_pages.is_some() { shared.heap_pages } else { config.default_heap_pages };
 
-<<<<<<< HEAD
-impl TryRuntimeCmd {
-	pub async fn run<B, ExecDispatch>(&self, config: Configuration) -> sc_cli::Result<()>
-	where
-		B: BlockT,
-		B::Hash: FromStr,
-		<B::Hash as FromStr>::Err: Debug,
-		NumberFor<B>: FromStr,
-		<NumberFor<B> as FromStr>::Err: Debug,
-		ExecDispatch: NativeExecutionDispatch + 'static,
-	{
-		let spec = config.chain_spec;
-		let genesis_storage = spec.build_storage()?;
-
-		let code = StorageData(
-			genesis_storage
-				.top
-				.get(well_known_keys::CODE)
-				.expect("code key must exist in genesis storage; qed")
-				.to_vec(),
-		);
-		let code_key = StorageKey(well_known_keys::CODE.to_vec());
-
-		let wasm_method = self.wasm_method;
-		let execution = self.execution;
-
-		let mut changes = Default::default();
-		// don't really care about these -- use the default values.
-		let max_runtime_instances = config.max_runtime_instances;
-		let heap_pages = config.default_heap_pages;
-		let executor = NativeExecutor::<ExecDispatch>::new(
-			wasm_method.into(),
-			heap_pages,
-			max_runtime_instances,
-		);
-
-		let ext = {
-			use remote_externalities::{
-				Builder, Mode, OfflineConfig, OnlineConfig, SnapshotConfig,
-			};
-			let builder = match &self.state {
-				State::Snap { snapshot_path } => {
-					Builder::<B>::new().mode(Mode::Offline(OfflineConfig {
-						state_snapshot: SnapshotConfig::new(snapshot_path),
-					}))
-				}
-				State::Live { url, snapshot_path, block_at, modules } => {
-					Builder::<B>::new().mode(Mode::Online(OnlineConfig {
-						transport: url.to_owned().into(),
-						state_snapshot: snapshot_path.as_ref().map(SnapshotConfig::new),
-						modules: modules.to_owned().unwrap_or_default(),
-						at: block_at
-							.as_ref()
-							.map(|b| {
-								b.parse().map_err(|e| format!("Could not parse hash: {:?}", e))
-							})
-							.transpose()?,
-						..Default::default()
-					}))
-				}
-			};
-=======
 	let mut changes = Default::default();
 	let max_runtime_instances = config.max_runtime_instances;
-	let executor = NativeExecutor::<ExecDispatch>::new(
-		wasm_method.into(),
-		heap_pages,
-		max_runtime_instances,
-	);
+	let executor =
+		NativeExecutor::<ExecDispatch>::new(wasm_method.into(), heap_pages, max_runtime_instances);
 
 	let (mode, url) = match command.state {
-			State::Live {
-				url,
-				snapshot_path,
-				block_at,
-				modules
-			} => {
-				let online_config = OnlineConfig {
-					transport: url.to_owned().into(),
-					state_snapshot: snapshot_path.as_ref().map(SnapshotConfig::new),
-					modules: modules.to_owned().unwrap_or_default(),
-					at: block_at.as_ref()
-						.map(|b| b.parse().map_err(|e| format!("Could not parse hash: {:?}", e))).transpose()?,
-					..Default::default()
-				};
->>>>>>> origin/master
+		State::Live { url, snapshot_path, block_at, modules } => {
+			let online_config = OnlineConfig {
+				transport: url.to_owned().into(),
+				state_snapshot: snapshot_path.as_ref().map(SnapshotConfig::new),
+				modules: modules.to_owned().unwrap_or_default(),
+				at: block_at
+					.as_ref()
+					.map(|b| b.parse().map_err(|e| format!("Could not parse hash: {:?}", e)))
+					.transpose()?,
+				..Default::default()
+			};
 
-				(Mode::Online(online_config), url)
-			},
-			State::Snap { snapshot_path } => {
-				// TODO This is a temporary hack; the url is used just to get the header. We should try
-				// and get the header out of state, OR use an arbitrary header if thats ok, OR allow
-				// the user to feed in a header via file.
-				// https://github.com/paritytech/substrate/issues/9027
-				// This assumes you have a node running on local host default
-				let url = "ws://127.0.0.1:9944".to_string();
-				let mode = Mode::Offline(OfflineConfig {
-					state_snapshot: SnapshotConfig::new(snapshot_path),
-				});
+			(Mode::Online(online_config), url)
+		}
+		State::Snap { snapshot_path } => {
+			// TODO This is a temporary hack; the url is used just to get the header. We should try
+			// and get the header out of state, OR use an arbitrary header if thats ok, OR allow
+			// the user to feed in a header via file.
+			// https://github.com/paritytech/substrate/issues/9027
+			// This assumes you have a node running on local host default
+			let url = "ws://127.0.0.1:9944".to_string();
+			let mode =
+				Mode::Offline(OfflineConfig { state_snapshot: SnapshotConfig::new(snapshot_path) });
 
-				(mode, url)
-			}
+			(mode, url)
+		}
 	};
 	let builder = Builder::<Block>::new().mode(mode);
 	let mut ext = if command.overwrite_code {
@@ -395,7 +283,8 @@ impl TryRuntimeCmd {
 	ext.register_extension(KeystoreExt(Arc::new(KeyStore::new())));
 	ext.register_extension(TransactionPoolExt::new(pool));
 
-	let header_hash: Block::Hash = command.header_at
+	let header_hash: Block::Hash = command
+		.header_at
 		.parse()
 		.map_err(|e| format!("Could not parse header hash: {:?}", e))?;
 	let header = rpc_api::get_header::<Block, _>(url, header_hash).await?;
@@ -408,8 +297,7 @@ impl TryRuntimeCmd {
 		"OffchainWorkerApi_offchain_worker",
 		header.encode().as_ref(),
 		ext.extensions,
-		&sp_state_machine::backend::BackendRuntimeCode::new(&ext.backend)
-			.runtime_code()?,
+		&sp_state_machine::backend::BackendRuntimeCode::new(&ext.backend).runtime_code()?,
 		sp_core::testing::TaskExecutor::new(),
 	)
 	.execute(execution.into())
@@ -420,32 +308,6 @@ impl TryRuntimeCmd {
 	Ok(())
 }
 
-<<<<<<< HEAD
-		let encoded_result = StateMachine::<_, _, NumberFor<B>, _>::new(
-			&ext.backend,
-			None,
-			&mut changes,
-			&executor,
-			"TryRuntime_on_runtime_upgrade",
-			&[],
-			ext.extensions,
-			&sp_state_machine::backend::BackendRuntimeCode::new(&ext.backend).runtime_code()?,
-			sp_core::testing::TaskExecutor::new(),
-		)
-		.execute(execution.into())
-		.map_err(|e| format!("failed to execute 'TryRuntime_on_runtime_upgrade' due to {:?}", e))?;
-
-		let (weight, total_weight) = <(u64, u64) as Decode>::decode(&mut &*encoded_result)
-			.map_err(|e| format!("failed to decode output due to {:?}", e))?;
-		log::info!(
-			"try-runtime executed without errors. Consumed weight = {}, total weight = {} ({})",
-			weight,
-			total_weight,
-			weight as f64 / total_weight as f64
-		);
-
-		Ok(())
-=======
 impl TryRuntimeCmd {
 	pub async fn run<Block, ExecDispatch>(&self, config: Configuration) -> sc_cli::Result<()>
 	where
@@ -459,13 +321,14 @@ impl TryRuntimeCmd {
 	{
 		match &self.command {
 			Command::OnRuntimeUpgrade(ref cmd) => {
-				on_runtime_upgrade::<Block, ExecDispatch>(self.shared.clone(), cmd.clone(), config).await
+				on_runtime_upgrade::<Block, ExecDispatch>(self.shared.clone(), cmd.clone(), config)
+					.await
 			}
 			Command::OffchainWorker(cmd) => {
-				offchain_worker::<Block, ExecDispatch>(self.shared.clone(), cmd.clone(), config).await
+				offchain_worker::<Block, ExecDispatch>(self.shared.clone(), cmd.clone(), config)
+					.await
 			}
 		}
->>>>>>> origin/master
 	}
 }
 
@@ -482,7 +345,7 @@ impl CliConfiguration for TryRuntimeCmd {
 	}
 }
 
-/// Extract `:code` from the given chain spec and return as `StorageData` along with the 
+/// Extract `:code` from the given chain spec and return as `StorageData` along with the
 /// corresponding `StorageKey`.
 fn extract_code(spec: Box<dyn ChainSpec>) -> sc_cli::Result<(StorageKey, StorageData)> {
 	let genesis_storage = spec.build_storage()?;
