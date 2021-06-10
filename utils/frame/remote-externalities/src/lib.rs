@@ -26,7 +26,7 @@ use std::{
 };
 
 use codec::{Decode, Encode};
-use jsonrpsee_ws_client::{traits::Client, v2::params::JsonRpcParams, WsClient, WsClientBuilder};
+use jsonrpsee_ws_client::{v2::params::JsonRpcParams, WsClient, WsClientBuilder};
 use log::*;
 use sp_core::{
 	hashing::twox_128,
@@ -35,6 +35,8 @@ use sp_core::{
 };
 pub use sp_io::TestExternalities;
 use sp_runtime::traits::Block as BlockT;
+
+pub mod rpc_api;
 
 type KeyPair = (StorageKey, StorageData);
 
@@ -71,7 +73,7 @@ impl<B: BlockT> Default for Mode<B> {
 	}
 }
 
-/// configuration of the online execution.
+/// Configuration of the offline execution.
 ///
 /// A state snapshot config must be present.
 #[derive(Clone)]
@@ -80,7 +82,7 @@ pub struct OfflineConfig {
 	pub state_snapshot: SnapshotConfig,
 }
 
-/// Description of the transport protocol.
+/// Description of the transport protocol (for online execution).
 #[derive(Debug)]
 pub struct Transport {
 	uri: String,
@@ -114,17 +116,6 @@ pub struct OnlineConfig<B: BlockT> {
 	pub transport: Transport,
 }
 
-impl<B: BlockT> Default for OnlineConfig<B> {
-	fn default() -> Self {
-		Self {
-			transport: Transport { uri: DEFAULT_TARGET.to_string(), client: None },
-			at: None,
-			state_snapshot: None,
-			modules: vec![],
-		}
-	}
-}
-
 impl<B: BlockT> OnlineConfig<B> {
 	/// Return rpc (ws) client.
 	fn rpc_client(&self) -> &WsClient {
@@ -132,6 +123,17 @@ impl<B: BlockT> OnlineConfig<B> {
 			.client
 			.as_ref()
 			.expect("ws client must have been initialized by now; qed.")
+	}
+}
+
+impl<B: BlockT> Default for OnlineConfig<B> {
+	fn default() -> Self {
+		Self {
+			transport: Transport { uri: DEFAULT_TARGET.to_owned(), client: None },
+			at: None,
+			state_snapshot: None,
+			modules: vec![],
+		}
 	}
 }
 
@@ -195,6 +197,7 @@ impl<B: BlockT> Builder<B> {
 
 // RPC methods
 impl<B: BlockT> Builder<B> {
+	/// Get the latest finalized head.
 	async fn rpc_get_head(&self) -> Result<B::Hash, &'static str> {
 		trace!(target: LOG_TARGET, "rpc: finalized_head");
 		RpcApi::<B>::finalized_head(self.as_online().rpc_client()).await.map_err(|e| {
@@ -256,6 +259,7 @@ impl<B: BlockT> Builder<B> {
 		prefix: StorageKey,
 		at: B::Hash,
 	) -> Result<Vec<KeyPair>, &'static str> {
+		use jsonrpsee_ws_client::traits::Client;
 		use serde_json::to_value;
 		let keys = self.get_keys_paged(prefix, at).await?;
 		let keys_count = keys.len();
@@ -450,8 +454,10 @@ impl<B: BlockT> Builder<B> {
 		info!(target: LOG_TARGET, "injecting a total of {} keys", kv.len());
 		for (k, v) in kv {
 			let (k, v) = (k.0, v.0);
+			// Insert the key,value pair into the test trie backend
 			ext.insert(k, v);
 		}
+
 		Ok(ext)
 	}
 }
