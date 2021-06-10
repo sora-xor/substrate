@@ -20,8 +20,7 @@
 
 #![warn(missing_docs)]
 
-use std::cmp::Reverse;
-use std::fmt;
+use std::{cmp::Reverse, fmt};
 
 use codec::{Decode, Encode};
 

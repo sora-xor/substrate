@@ -19,14 +19,14 @@
 
 use std::convert::{TryFrom, TryInto};
 
+use frame_support::PalletId;
 use sc_cli::{
 	utils::print_from_uri, with_crypto_scheme, CryptoSchemeFlag, Error, KeystoreParams,
 	OutputTypeFlag,
 };
-use sp_runtime::traits::AccountIdConversion;
 use sp_core::crypto::{Ss58AddressFormat, Ss58Codec};
+use sp_runtime::traits::AccountIdConversion;
 use structopt::StructOpt;
-use frame_support::PalletId;
 
 /// The `palletid` command
 #[derive(Debug, StructOpt)]
