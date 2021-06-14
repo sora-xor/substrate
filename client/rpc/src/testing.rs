@@ -18,8 +18,12 @@
 
 //! Testing utils used by the RPC tests.
 
-use rpc::futures::future as future01;
-use futures::{executor, compat::Future01CompatExt, FutureExt};
+use futures::{executor, FutureExt, future::BoxFuture};
+use sp_core::traits::SpawnNamed;
+use substrate_test_runtime_client::{prelude::*, runtime::{H256, Block, Header}};
+use sp_rpc::{list::ListOrValue, number::NumberOrHex};
+
+type SignedBlock = sp_runtime::generic::SignedBlock<Block>;
 
 // Executor shared by all tests.
 //
@@ -30,16 +34,36 @@ lazy_static::lazy_static! {
 		.expect("Failed to create thread pool executor for tests");
 }
 
-type Boxed01Future01 = Box<dyn future01::Future<Item = (), Error = ()> + Send + 'static>;
-
 /// Executor for use in testing
+#[derive(Clone, Debug)]
 pub struct TaskExecutor;
-impl future01::Executor<Boxed01Future01> for TaskExecutor {
-	fn execute(
-		&self,
-		future: Boxed01Future01,
-	) -> std::result::Result<(), future01::ExecuteError<Boxed01Future01>>{
-		EXECUTOR.spawn_ok(future.compat().map(drop));
+
+impl TaskExecutor {
+	pub fn execute(fut: BoxFuture<'static, ()>) -> std::result::Result<(), ()> {
+		EXECUTOR.spawn_ok(fut);
 		Ok(())
+	}
+}
+
+impl SpawnNamed for TaskExecutor {
+	fn spawn_blocking(&self, _: &'static str, _: BoxFuture<'static, ()>) {
+		todo!()
+	}
+
+	fn spawn(&self, _name: &'static str, fut: BoxFuture<'static, ()>) {
+		TaskExecutor::execute(fut).expect("future must succeed in tests")
+	}
+}
+
+jsonrpsee::proc_macros::rpc_client_api! {
+	pub(crate) Chain {
+		#[rpc(method = "chain_getHeader", positional_params)]
+		fn header(hash: Option<H256>) -> Header;
+		#[rpc(method = "chain_getBlock", positional_params)]
+		fn block(hash: Option<H256>) -> SignedBlock;
+		#[rpc(method = "chain_getBlockHash", positional_params)]
+		fn block_hash(hash: Option<ListOrValue<NumberOrHex>>) -> ListOrValue<Option<H256>>;
+		#[rpc(method = "chain_getFinalizedHead")]
+		fn finalized_head() -> H256;
 	}
 }

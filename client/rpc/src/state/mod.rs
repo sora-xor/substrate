@@ -21,8 +21,8 @@
 mod state_full;
 mod state_light;
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
 
 use std::sync::Arc;
 

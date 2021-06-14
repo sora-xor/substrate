@@ -786,13 +786,39 @@ fn gen_rpc_module<TBl, TBackend, TCl, TExPool>(
 
 	let mut rpc_api = RpcModule::new(());
 
-	// RPC APIs.
-	// TODO(niklasad1): add remaining RPC API's here
-	let chain_rpc = sc_rpc::chain::new_full(client.clone(), task_executor.clone())
-		.into_rpc_module()
-		.expect("Infallible; qed");
+	let (chain, state, child_state) = if let (Some(remote_blockchain), Some(on_demand)) =
+		(remote_blockchain, on_demand) {
+		// Light clients
+		// let chain = sc_rpc::chain::new_light(
+		//     client.clone(),
+		//     task_executor.clone(),
+		//     remote_blockchain.clone(),
+		//     on_demand.clone(),
+		// );
+		// let (state, child_state) = sc_rpc::state::new_light(
+		//     client.clone(),
+		//     subscriptions.clone(),
+		//     remote_blockchain.clone(),
+		//     on_demand,
+		//     deny_unsafe,
+		// );
+		todo!();
 
-	let author_rpc = sc_rpc::author::Author::new(
+	} else {
+		// Full nodes
+		let chain = sc_rpc::chain::new_full(client.clone(), task_executor.clone())
+			.into_rpc_module()
+			.expect("Infallible; qed");
+
+		let (state, child_state) = sc_rpc::state::new_full(client.clone(), task_executor.clone(), deny_unsafe);
+		let state = state.into_rpc_module().expect("Method names are unique; qed");
+		let child_state = child_state.into_rpc_module().expect("Method names are unique; qed");
+
+		(chain, state, child_state)
+	};
+
+
+	let author = sc_rpc::author::Author::new(
 		client.clone(),
 		transaction_pool,
 		keystore,
@@ -800,28 +826,24 @@ fn gen_rpc_module<TBl, TBackend, TCl, TExPool>(
 		task_executor.clone()
 	).into_rpc_module().expect("Infallible; qed");
 
-	let system_rpc = sc_rpc::system::System::new(system_info, system_rpc_tx, deny_unsafe)
+	let system = sc_rpc::system::System::new(system_info, system_rpc_tx, deny_unsafe)
 		.into_rpc_module()
 		.expect("Infallible; qed");
-	let (state, child_state) = sc_rpc::state::new_full(client.clone(), task_executor.clone(), deny_unsafe);
 
-	let state_rpc = state.into_rpc_module().expect("Method names are unique; qed");
-	let child_state_rpc = child_state.into_rpc_module().expect("Method names are unique; qed");
-
-	let maybe_offchain_rpc = offchain_storage.map(|storage| {
+	if let Some(storage) = offchain_storage {
 		let offchain = sc_rpc::offchain::Offchain::new(storage, deny_unsafe)
 			.into_rpc_module()
 			.expect("Infaillible; qed");
 
 		rpc_api.merge(offchain).unwrap();
-	});
+	}
 
 	// only unique method names used; qed
-	rpc_api.merge(chain_rpc).unwrap();
-	rpc_api.merge(author_rpc).unwrap();
-	rpc_api.merge(system_rpc).unwrap();
-	rpc_api.merge(state_rpc).unwrap();
-	rpc_api.merge(child_state_rpc).unwrap();
+	rpc_api.merge(chain).unwrap();
+	rpc_api.merge(author).unwrap();
+	rpc_api.merge(system).unwrap();
+	rpc_api.merge(state).unwrap();
+	rpc_api.merge(child_state).unwrap();
 
 	rpc_api
 }

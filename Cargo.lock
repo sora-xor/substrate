@@ -1268,6 +1268,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ct-logs"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1a816186fa68d9e426e3cb4ae4dff1fcd8e4a2c34b781bf7a822574a0d0aac8"
+dependencies = [
+ "sct",
+]
+
+[[package]]
 name = "ctor"
 version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2666,7 +2675,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37743cc83e8ee85eacfce90f2f4102030d9ff0a95244098d781e9bee4a90abb6"
 dependencies = [
  "bytes 0.5.6",
- "ct-logs",
+ "ct-logs 0.7.0",
  "futures-util",
  "hyper 0.13.10",
  "log",
@@ -2674,6 +2683,23 @@ dependencies = [
  "rustls-native-certs 0.4.0",
  "tokio 0.2.25",
  "tokio-rustls 0.14.1",
+ "webpki",
+]
+
+[[package]]
+name = "hyper-rustls"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f9f7a97316d44c0af9b0301e65010573a853a9fc97046d7331d7f6bc0fd5a64"
+dependencies = [
+ "ct-logs 0.8.0",
+ "futures-util",
+ "hyper 0.14.5",
+ "log",
+ "rustls 0.19.1",
+ "rustls-native-certs 0.5.0",
+ "tokio 1.6.0",
+ "tokio-rustls 0.22.0",
  "webpki",
 ]
 
@@ -3010,11 +3036,31 @@ name = "jsonrpsee"
 version = "0.2.0"
 source = "git+https://github.com/paritytech/jsonrpsee?branch=master#9a02c10a311c36185b13d2d8d71d37ee44c16c0b"
 dependencies = [
+ "jsonrpsee-http-client",
  "jsonrpsee-http-server",
  "jsonrpsee-proc-macros",
  "jsonrpsee-types",
  "jsonrpsee-utils",
+ "jsonrpsee-ws-client",
  "jsonrpsee-ws-server",
+]
+
+[[package]]
+name = "jsonrpsee-http-client"
+version = "0.2.0"
+source = "git+https://github.com/paritytech/jsonrpsee?branch=master#9a02c10a311c36185b13d2d8d71d37ee44c16c0b"
+dependencies = [
+ "async-trait",
+ "fnv",
+ "hyper 0.14.5",
+ "hyper-rustls 0.22.1",
+ "jsonrpsee-types",
+ "jsonrpsee-utils",
+ "log",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "url 2.2.1",
 ]
 
 [[package]]
@@ -3102,9 +3148,9 @@ dependencies = [
  "serde_json",
  "soketto 0.5.0",
  "thiserror",
- "tokio 0.2.25",
- "tokio-rustls 0.15.0",
- "tokio-util 0.3.1",
+ "tokio 1.6.0",
+ "tokio-rustls 0.22.0",
+ "tokio-util 0.6.3",
  "url 2.2.1",
 ]
 
@@ -6905,7 +6951,7 @@ dependencies = [
  "sp-core",
  "sp-io",
  "sp-runtime",
- "tokio 0.2.25",
+ "tokio 1.6.0",
 ]
 
 [[package]]
@@ -7945,7 +7991,7 @@ dependencies = [
  "futures-timer 3.0.2",
  "hex",
  "hyper 0.13.10",
- "hyper-rustls",
+ "hyper-rustls 0.21.0",
  "lazy_static",
  "log",
  "num_cpus",
@@ -8035,7 +8081,7 @@ dependencies = [
  "sp-utils",
  "sp-version",
  "substrate-test-runtime-client",
- "tokio 0.1.22",
+ "tokio 1.6.0",
 ]
 
 [[package]]
@@ -10316,8 +10362,12 @@ dependencies = [
  "memchr",
  "mio 0.7.9",
  "num_cpus",
+ "once_cell",
+ "parking_lot 0.11.1",
  "pin-project-lite 0.2.6",
+ "signal-hook-registry",
  "tokio-macros 1.2.0",
+ "winapi 0.3.9",
 ]
 
 [[package]]
@@ -10452,13 +10502,12 @@ dependencies = [
 
 [[package]]
 name = "tokio-rustls"
-version = "0.15.0"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03d15e5669243a45f630a5167d101b942174ca94b615445b2057eace1c818736"
+checksum = "bc6844de72e57df1980054b38be3a9f4702aba4858be64dd700181a8a6d0e1b6"
 dependencies = [
- "futures-core",
  "rustls 0.19.1",
- "tokio 0.2.25",
+ "tokio 1.6.0",
  "webpki",
 ]
 
@@ -10576,7 +10625,6 @@ checksum = "be8242891f2b6cbef26a2d7e8605133c2c554cd35b3e4948ea892d6d68436499"
 dependencies = [
  "bytes 0.5.6",
  "futures-core",
- "futures-io",
  "futures-sink",
  "log",
  "pin-project-lite 0.1.12",

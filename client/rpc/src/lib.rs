@@ -54,7 +54,7 @@ impl SubscriptionTaskExecutor {
 	}
 }
 
-// TODO(niklasad1): remove, kept for now to make it compile ^^
+// // TODO(niklasad1): remove, kept for now to make it compile ^^
 impl Executor<Box<dyn Future<Item = (), Error = ()> + Send>> for SubscriptionTaskExecutor {
 	fn execute(
 		&self,

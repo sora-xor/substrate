@@ -18,8 +18,8 @@
 
 //! Substrate system API.
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
 
 use futures::{FutureExt, channel::oneshot};
 use sc_rpc_api::DenyUnsafe;

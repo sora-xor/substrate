@@ -18,8 +18,8 @@
 
 //! Substrate block-author/full-node API.
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
 
 use std::{sync::Arc, convert::TryInto};
 
