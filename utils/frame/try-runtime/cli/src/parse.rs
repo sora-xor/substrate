@@ -17,13 +17,14 @@
 
 //! Utils for parsing user input
 
-use std::str::FromStr;
+use std::{fmt::Debug, str::FromStr};
 use sp_runtime::traits::Block as BlockT;
 
 pub(crate) fn hash<Block>(block_hash: &str) -> Result<Block::Hash, String>
 where
 	Block: BlockT,
 	Block::Hash: FromStr,
+	<Block::Hash as FromStr>::Err: Debug,
 {
 	let (block_hash, offset) = if block_hash.starts_with("0x") {
 		(&block_hash[2..], 2)

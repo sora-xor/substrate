@@ -69,10 +69,11 @@ pub struct ExecuteBlockCmd {
 }
 
 #[derive(Debug, Clone, structopt::StructOpt)]
-pub struct SharedParams<Block: BlockT>
-// where
-// 	Block: BlockT,
-// 	Block::Hash: FromStr,
+pub struct SharedParams<Block>
+where
+	Block: BlockT,
+	Block::Hash: FromStr,
+	<Block::Hash as FromStr>::Err: Debug,
 {
 	/// The shared parameters
 	#[allow(missing_docs)]
@@ -133,7 +134,11 @@ pub struct SharedParams<Block: BlockT>
 
 /// Various commands to try out against runtime state at a specific block.
 #[derive(Debug, Clone, structopt::StructOpt)]
-pub struct TryRuntimeCmd<Block: BlockT>
+pub struct TryRuntimeCmd<Block>
+where
+	Block: BlockT,
+	Block::Hash: FromStr,
+	<Block::Hash as FromStr>::Err: Debug,
 {
 	#[structopt(flatten)]
 	pub shared: SharedParams<Block>,
@@ -313,6 +318,7 @@ where
 	ext.register_extension(TransactionPoolExt::new(pool));
 
 	let header_hash: Block::Hash = shared.block_at;
+	let header = rpc_api::get_header::<Block, _>(shared.url, header_hash).await?;
 
 	let _ = StateMachine::<_, _, NumberFor<Block>, _>::new(
 		&ext.backend,
@@ -475,6 +481,7 @@ impl<Block> CliConfiguration for TryRuntimeCmd<Block>
 where
 	Block: BlockT,
 	Block::Hash: FromStr,
+	<Block::Hash as FromStr>::Err: Debug,
 {
 	fn shared_params(&self) -> &sc_cli::SharedParams {
 		&self.shared.shared_params
