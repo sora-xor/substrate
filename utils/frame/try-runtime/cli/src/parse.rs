@@ -17,7 +17,14 @@
 
 //! Utils for parsing user input
 
-pub(crate) fn hash(block_hash: &str) -> Result<String, String> {
+use std::str::FromStr;
+use sp_runtime::traits::Block as BlockT;
+
+pub(crate) fn hash<Block>(block_hash: &str) -> Result<Block::Hash, String>
+where
+	Block: BlockT,
+	Block::Hash: FromStr,
+{
 	let (block_hash, offset) = if block_hash.starts_with("0x") {
 		(&block_hash[2..], 2)
 	} else {
@@ -30,7 +37,7 @@ pub(crate) fn hash(block_hash: &str) -> Result<String, String> {
 			offset + pos,
 		))
 	} else {
-		Ok(block_hash.into())
+		block_hash.to_string().parse().map_err(|e| format!("Could not parse hash: {:?}", e))
 	}
 }
 

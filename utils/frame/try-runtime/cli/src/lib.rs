@@ -69,7 +69,11 @@ pub struct ExecuteBlockCmd {
 }
 
 #[derive(Debug, Clone, structopt::StructOpt)]
-pub struct SharedParams {
+pub struct SharedParams<Block: BlockT>
+// where
+// 	Block: BlockT,
+// 	Block::Hash: FromStr,
+{
 	/// The shared parameters
 	#[allow(missing_docs)]
 	#[structopt(flatten)]
@@ -111,7 +115,8 @@ pub struct SharedParams {
 			&[("command", "offchain-worker"), ("command", "execute-block"), ("subcommand", "live")]
 		)
 	)]
-	pub block_at: String,
+	pub block_at: Block::Hash,
+
 	/// Whether or not to overwrite the code from state with the code from
 	/// the specified chain spec.
 	#[structopt(long)]
@@ -128,9 +133,10 @@ pub struct SharedParams {
 
 /// Various commands to try out against runtime state at a specific block.
 #[derive(Debug, Clone, structopt::StructOpt)]
-pub struct TryRuntimeCmd {
+pub struct TryRuntimeCmd<Block: BlockT>
+{
 	#[structopt(flatten)]
-	pub shared: SharedParams,
+	pub shared: SharedParams<Block>,
 
 	#[structopt(subcommand)]
 	pub command: Command,
@@ -159,7 +165,7 @@ pub enum State {
 }
 
 async fn on_runtime_upgrade<Block, ExecDispatch>(
-	shared: SharedParams,
+	shared: SharedParams<Block>,
 	command: OnRuntimeUpgradeCmd,
 	config: Configuration
 ) -> sc_cli::Result<()>
@@ -197,7 +203,7 @@ where
 				transport: shared.url.to_owned().into(),
 				state_snapshot: snapshot_path.as_ref().map(SnapshotConfig::new),
 				modules: modules.to_owned().unwrap_or_default(),
-				at: Some(shared.block_at.parse().map_err(|e| format!("Could not parse hash: {:?}", e))?),
+				at: Some(shared.block_at),
 				..Default::default()
 			})),
 		};
@@ -237,7 +243,7 @@ where
 }
 
 async fn offchain_worker<Block, ExecDispatch>(
-	shared: SharedParams,
+	shared: SharedParams<Block>,
 	command: OffchainWorkerCmd,
 	config: Configuration,
 ) -> sc_cli::Result<()>
@@ -267,7 +273,7 @@ where
 				snapshot_path,
 				modules
 			} => {
-				let at = shared.block_at.parse().map_err(|e| format!("Could not parse hash: {:?}", e))?;
+				let at = shared.block_at;
 				let online_config = OnlineConfig {
 					transport: shared.url.to_owned().into(),
 					state_snapshot: snapshot_path.as_ref().map(SnapshotConfig::new),
@@ -306,10 +312,7 @@ where
 	ext.register_extension(KeystoreExt(Arc::new(KeyStore::new())));
 	ext.register_extension(TransactionPoolExt::new(pool));
 
-	let header_hash: Block::Hash = shared.block_at
-		.parse()
-		.map_err(|e| format!("Could not parse header hash: {:?}", e))?;
-	let header = rpc_api::get_header::<Block, _>(shared.url, header_hash).await?;
+	let header_hash: Block::Hash = shared.block_at;
 
 	let _ = StateMachine::<_, _, NumberFor<Block>, _>::new(
 		&ext.backend,
@@ -332,7 +335,7 @@ where
 }
 
 async fn execute_block<Block, ExecDispatch>(
-	shared: SharedParams,
+	shared: SharedParams<Block>,
 	command: ExecuteBlockCmd,
 	config: Configuration,
 )-> sc_cli::Result<()>
@@ -356,9 +359,7 @@ where
 		max_runtime_instances,
 	);
 
-	let block_hash: Block::Hash = shared.block_at
-		.parse()
-		.map_err(|e| format!("Could not parse header hash: {:?}", e))?;
+	let block_hash: Block::Hash = shared.block_at;
 	let block: Block = rpc_api::get_block::<Block, _>(shared.url.clone(), block_hash).await?;
 
 	let mode = match command.state {
@@ -436,15 +437,24 @@ where
 	Ok(())
 }
 
-impl TryRuntimeCmd {
-	pub async fn run<Block, ExecDispatch>(&self, config: Configuration) -> sc_cli::Result<()>
+impl<Block> TryRuntimeCmd<Block>
+where
+	Block: BlockT + serde::de::DeserializeOwned,
+	Block::Header: serde::de::DeserializeOwned,
+	Block::Hash: FromStr,
+	<Block::Hash as FromStr>::Err: Debug,
+	NumberFor<Block>: FromStr,
+	<NumberFor<Block> as FromStr>::Err: Debug,
+{
+	// pub async fn run<Block, ExecDispatch>(&self, config: Configuration) -> sc_cli::Result<()>
+	pub async fn run<ExecDispatch>(&self, config: Configuration) -> sc_cli::Result<()>
 	where
-		Block: BlockT + serde::de::DeserializeOwned,
-		Block::Header: serde::de::DeserializeOwned,
-		Block::Hash: FromStr,
-		<Block::Hash as FromStr>::Err: Debug,
-		NumberFor<Block>: FromStr,
-		<NumberFor<Block> as FromStr>::Err: Debug,
+		// Block: BlockT + serde::de::DeserializeOwned,
+		// Block::Header: serde::de::DeserializeOwned,
+		// Block::Hash: FromStr,
+		// <Block::Hash as FromStr>::Err: Debug,
+		// NumberFor<Block>: FromStr,
+		// <NumberFor<Block> as FromStr>::Err: Debug,
 		ExecDispatch: NativeExecutionDispatch + 'static,
 	{
 		match &self.command {
@@ -461,7 +471,11 @@ impl TryRuntimeCmd {
 	}
 }
 
-impl CliConfiguration for TryRuntimeCmd {
+impl<Block> CliConfiguration for TryRuntimeCmd<Block>
+where
+	Block: BlockT,
+	Block::Hash: FromStr,
+{
 	fn shared_params(&self) -> &sc_cli::SharedParams {
 		&self.shared.shared_params
 	}
