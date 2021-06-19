@@ -112,6 +112,7 @@ pub struct SharedParams {
 		)
 	)]
 	pub block_at: String,
+
 	/// Whether or not to overwrite the code from state with the code from
 	/// the specified chain spec.
 	#[structopt(long)]
@@ -124,6 +125,10 @@ pub struct SharedParams {
 	// https://github.com/paritytech/substrate/issues/9027
 	#[structopt(short, long, default_value = "ws://localhost:9944", parse(try_from_str = parse::url))]
 	url: String,
+
+	/// Whether or not to fetch code from state. Helpful if only fetching state from specific modules
+	#[structopt(long, conflicts_with = "overwrite_code")]
+	fetch_code: bool,
 }
 
 /// Various commands to try out against runtime state at a specific block.
@@ -287,17 +292,27 @@ where
 			}
 	};
 	let builder = Builder::<Block>::new()
-		.mode(mode)
-		.inject_hashed_key(&[twox_128(b"System"), twox_128(b"LastRuntimeUpgrade")].concat());
-	let mut ext = if shared.overwrite_code {
+		.mode(mode);
+	// 	.inject_hashed_key(&[twox_128(b"System"), twox_128(b"LastRuntimeUpgrade")].concat());
+	// let mut ext = if shared.overwrite_code {
+	// 	let (code_key, code) = extract_code(config.chain_spec)?;
+	// 	builder.inject_key_value(&[(code_key, code)]).build().await?
+	// } else {
+	// 	builder
+	// 		.inject_hashed_key(well_known_keys::CODE)
+	// 		.build()
+	// 		.await?
+	// };
+
+	let builder = if shared.overwrite_code {
 		let (code_key, code) = extract_code(config.chain_spec)?;
-		builder.inject_key_value(&[(code_key, code)]).build().await?
+		builder.inject_key_value(&[(code_key, code)])
+	} else if shared.fetch_code {
+		builder.inject_hashed_key(well_known_keys::CODE)
 	} else {
 		builder
-			.inject_hashed_key(well_known_keys::CODE)
-			.build()
-			.await?
 	};
+	let mut ext = builder.build().await?;
 
 	let (offchain, _offchain_state) = TestOffchainExt::new();
 	let (pool, _pool_state) = TestTransactionPoolExt::new();
@@ -386,17 +401,18 @@ where
 
 	let ext = {
 		let builder = Builder::<Block>::new()
-			.mode(mode)
-			.inject_hashed_key(&[twox_128(b"System"), twox_128(b"LastRuntimeUpgrade")].concat());
-		let mut ext = if shared.overwrite_code {
+			.mode(mode);
+			// .inject_hashed_key(&[twox_128(b"System"), twox_128(b"LastRuntimeUpgrade")].concat());
+
+		let builder = if shared.overwrite_code {
 			let (code_key, code) = extract_code(config.chain_spec)?;
-			builder.inject_key_value(&[(code_key, code)]).build().await?
+			builder.inject_key_value(&[(code_key, code)])
+		} else if shared.fetch_code {
+			builder.inject_hashed_key(well_known_keys::CODE)
 		} else {
 			builder
-				.inject_hashed_key(well_known_keys::CODE)
-				.build()
-				.await?
 		};
+		let mut ext = builder.build().await?;
 
 		// register externality extensions in order to provide host interface for OCW to the
 		// runtime.
@@ -432,6 +448,10 @@ where
 	debug_assert!(_encoded_result == vec![1]);
 
 	log::info!("Core_execute_block executed without errors.");
+
+	// let system_events_key = &[twox_128(b"System"), twox_128(b"Events")].concat();
+	// let externalities_store = ext.ext();
+	// let events = externalities_store.storage(system_events_key);
 
 	Ok(())
 }
