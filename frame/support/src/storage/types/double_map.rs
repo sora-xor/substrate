@@ -21,8 +21,7 @@
 use codec::{Decode, Encode, EncodeLike, FullCodec};
 use crate::{
 	storage::{
-		StorageAppend, StorageDecodeLength, StoragePrefixedMap,
-		bounded_vec::BoundedVec,
+		StorageAppend, StorageTryAppend, StorageDecodeLength, StoragePrefixedMap,
 		types::{OptionQuery, QueryKindTrait, OnEmptyGetter},
 	},
 	traits::{GetDefault, StorageInstance, Get, MaxEncodedLen, StorageInfo},
@@ -116,52 +115,6 @@ where
 	}
 }
 
-impl<Prefix, Hasher1, Key1, Hasher2, Key2, QueryKind, OnEmpty, MaxValues, VecValue, VecBound>
-	StorageDoubleMap<
-		Prefix,
-		Hasher1,
-		Key1,
-		Hasher2,
-		Key2,
-		BoundedVec<VecValue, VecBound>,
-		QueryKind,
-		OnEmpty,
-		MaxValues,
-	> where
-	Prefix: StorageInstance,
-	Hasher1: crate::hash::StorageHasher,
-	Hasher2: crate::hash::StorageHasher,
-	Key1: FullCodec,
-	Key2: FullCodec,
-	QueryKind: QueryKindTrait<BoundedVec<VecValue, VecBound>, OnEmpty>,
-	OnEmpty: Get<QueryKind::Query> + 'static,
-	MaxValues: Get<Option<u32>>,
-	VecValue: FullCodec,
-	VecBound: Get<u32>,
-{
-	/// Try and append the given item to the double map in the storage.
-	///
-	/// Is only available if `Value` of the map is [`BoundedVec`].
-	pub fn try_append<EncodeLikeItem, EncodeLikeKey1, EncodeLikeKey2>(
-		key1: EncodeLikeKey1,
-		key2: EncodeLikeKey2,
-		item: EncodeLikeItem,
-	) -> Result<(), ()>
-	where
-		EncodeLikeKey1: EncodeLike<Key1> + Clone,
-		EncodeLikeKey2: EncodeLike<Key2> + Clone,
-		EncodeLikeItem: EncodeLike<VecValue>,
-	{
-		<
-			Self
-			as
-			crate::storage::bounded_vec::TryAppendDoubleMap<Key1, Key2, VecValue, VecBound>
-		>::try_append(
-			key1, key2, item,
-		)
-	}
-}
-
 impl<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>
 	StorageDoubleMap<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>
 where
@@ -252,8 +205,9 @@ where
 	}
 
 	/// Remove all values under the first key.
-	pub fn remove_prefix<KArg1>(k1: KArg1) where KArg1: ?Sized + EncodeLike<Key1> {
-		<Self as crate::storage::StorageDoubleMap<Key1, Key2, Value>>::remove_prefix(k1)
+	pub fn remove_prefix<KArg1>(k1: KArg1, limit: Option<u32>) -> sp_io::KillStorageResult
+		where KArg1: ?Sized + EncodeLike<Key1> {
+		<Self as crate::storage::StorageDoubleMap<Key1, Key2, Value>>::remove_prefix(k1, limit)
 	}
 
 	/// Iterate over values that share the first key.
@@ -363,8 +317,8 @@ where
 	}
 
 	/// Remove all value of the storage.
-	pub fn remove_all() {
-		<Self as crate::storage::StoragePrefixedMap<Value>>::remove_all()
+	pub fn remove_all(limit: Option<u32>) -> sp_io::KillStorageResult {
+		<Self as crate::storage::StoragePrefixedMap<Value>>::remove_all(limit)
 	}
 
 	/// Iter over all value of the storage.
@@ -389,6 +343,26 @@ where
 	/// This would typically be called inside the module implementation of on_runtime_upgrade.
 	pub fn translate_values<OldValue: Decode, F: FnMut(OldValue) -> Option<Value>>(f: F) {
 		<Self as crate::storage::StoragePrefixedMap<Value>>::translate_values(f)
+	}
+
+	/// Try and append the given item to the value in the storage.
+	///
+	/// Is only available if `Value` of the storage implements [`StorageTryAppend`].
+	pub fn try_append<KArg1, KArg2, Item, EncodeLikeItem>(
+		key1: KArg1,
+		key2: KArg2,
+		item: EncodeLikeItem,
+	) -> Result<(), ()>
+	where
+		KArg1: EncodeLike<Key1> + Clone,
+		KArg2: EncodeLike<Key2> + Clone,
+		Item: Encode,
+		EncodeLikeItem: EncodeLike<Item>,
+		Value: StorageTryAppend<Item>,
+	{
+		<
+			Self as crate::storage::TryAppendDoubleMap<Key1, Key2, Value, Item>
+		>::try_append(key1, key2, item)
 	}
 }
 
@@ -642,7 +616,7 @@ mod test {
 
 			A::insert(3, 30, 10);
 			A::insert(4, 40, 10);
-			A::remove_all();
+			A::remove_all(None);
 			assert_eq!(A::contains_key(3, 30), false);
 			assert_eq!(A::contains_key(4, 40), false);
 
@@ -682,7 +656,7 @@ mod test {
 			assert_eq!(AValueQueryWithAnOnEmpty::DEFAULT.0.default_byte(), 97u32.encode());
 			assert_eq!(A::DEFAULT.0.default_byte(), Option::<u32>::None.encode());
 
-			WithLen::remove_all();
+			WithLen::remove_all(None);
 			assert_eq!(WithLen::decode_len(3, 30), None);
 			WithLen::append(0, 100, 10);
 			assert_eq!(WithLen::decode_len(0, 100), Some(1));
@@ -696,7 +670,7 @@ mod test {
 			assert_eq!(A::iter_prefix_values(4).collect::<Vec<_>>(), vec![13, 14]);
 			assert_eq!(A::iter_prefix(4).collect::<Vec<_>>(), vec![(40, 13), (41, 14)]);
 
-			A::remove_prefix(3);
+			A::remove_prefix(3, None);
 			assert_eq!(A::iter_prefix(3).collect::<Vec<_>>(), vec![]);
 			assert_eq!(A::iter_prefix(4).collect::<Vec<_>>(), vec![(40, 13), (41, 14)]);
 

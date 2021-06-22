@@ -17,7 +17,7 @@
 
 use crate::{
 	CodeHash, Event, Config, Pallet as Contracts,
-	BalanceOf, ContractInfo, gas::GasMeter, rent::Rent, storage::Storage,
+	BalanceOf, ContractInfo, gas::GasMeter, rent::{Rent, RentStatus}, storage::Storage,
 	Error, ContractInfoOf, Schedule, AliveContractInfo, AccountCounter,
 };
 use sp_core::crypto::UncheckedFrom;
@@ -32,7 +32,7 @@ use frame_support::{
 	storage::{with_transaction, TransactionOutcome},
 	traits::{ExistenceRequirement, Currency, Time, Randomness, Get},
 	weights::Weight,
-	ensure,
+	ensure, DefaultNoBound,
 };
 use pallet_contracts_primitives::{ExecReturnValue};
 use smallvec::{SmallVec, Array};
@@ -82,7 +82,7 @@ impl<T: Into<DispatchError>> From<T> for ExecError {
 }
 
 /// Information needed for rent calculations that can be requested by a contract.
-#[derive(codec::Encode)]
+#[derive(codec::Encode, DefaultNoBound)]
 #[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct RentParams<T: Config> {
 	/// The total balance of the contract. Includes the balance transferred from the caller.
@@ -142,27 +142,6 @@ where
 	}
 }
 
-/// We cannot derive `Default` because `T` does not necessarily implement `Default`.
-#[cfg(test)]
-impl<T: Config> Default for RentParams<T> {
-	fn default() -> Self {
-		Self {
-			total_balance: Default::default(),
-			free_balance: Default::default(),
-			subsistence_threshold: Default::default(),
-			deposit_per_contract: Default::default(),
-			deposit_per_storage_byte: Default::default(),
-			deposit_per_storage_item: Default::default(),
-			rent_allowance: Default::default(),
-			rent_fraction: Default::default(),
-			storage_size: Default::default(),
-			code_size: Default::default(),
-			code_refcount: Default::default(),
-			_reserved: Default::default(),
-		}
-	}
-}
-
 /// An interface that provides access to the external environment in which the
 /// smart-contract is executed.
 ///
@@ -188,6 +167,7 @@ pub trait Ext: sealing::Sealed {
 		to: AccountIdOf<Self::T>,
 		value: BalanceOf<Self::T>,
 		input_data: Vec<u8>,
+		allows_reentry: bool,
 	) -> Result<(ExecReturnValue, u32), (ExecError, u32)>;
 
 	/// Instantiate a contract from the given code.
@@ -312,6 +292,9 @@ pub trait Ext: sealing::Sealed {
 
 	/// Information needed for rent calculations.
 	fn rent_params(&self) -> &RentParams<Self::T>;
+
+	/// Information about the required deposit and resulting rent.
+	fn rent_status(&mut self, at_refcount: u32) -> RentStatus<Self::T>;
 
 	/// Get a mutable reference to the nested gas meter.
 	fn gas_meter(&mut self) -> &mut GasMeter<Self::T>;
@@ -475,6 +458,8 @@ pub struct Frame<T: Config> {
 	entry_point: ExportedFunction,
 	/// The gas meter capped to the supplied gas limit.
 	nested_meter: GasMeter<T>,
+	/// If `false` the contract enabled its defense against reentrance attacks.
+	allows_reentry: bool,
 }
 
 /// Parameter passed in when creating a new `Frame`.
@@ -704,8 +689,11 @@ where
 					contract
 				} else {
 					<ContractInfoOf<T>>::get(&dest)
-						.and_then(|contract| contract.get_alive())
-						.ok_or((Error::<T>::NotCallable.into(), 0))?
+						.ok_or((<Error<T>>::ContractNotFound.into(), 0))
+						.and_then(|contract|
+							contract.get_alive()
+								.ok_or((<Error<T>>::ContractIsTombstone.into(), 0))
+						)?
 				};
 
 				let executable = E::from_storage(contract.code_hash, schedule, gas_meter)
@@ -719,7 +707,7 @@ where
 				let contract = Rent::<T, E>
 					::charge(&dest, contract, executable.occupied_storage())
 					.map_err(|e| (e.into(), executable.code_len()))?
-					.ok_or((Error::<T>::NotCallable.into(), executable.code_len()))?;
+					.ok_or((Error::<T>::RentNotPaid.into(), executable.code_len()))?;
 				(dest, contract, executable, ExportedFunction::Call)
 			}
 			FrameArgs::Instantiate{sender, trie_seed, executable, salt} => {
@@ -746,6 +734,7 @@ where
 			entry_point,
 			nested_meter: gas_meter.nested(gas_limit)
 				.map_err(|e| (e.into(), executable.code_len()))?,
+			allows_reentry: true,
 		};
 
 		Ok((frame, executable))
@@ -809,7 +798,7 @@ where
 			let code_len = executable.code_len();
 
 			// Every call or instantiate also optionally transferres balance.
-			self.initial_transfer().map_err(|e| (ExecError::from(e), 0))?;
+			self.initial_transfer().map_err(|e| (ExecError::from(e), code_len))?;
 
 			// Call into the wasm blob.
 			let output = executable.execute(
@@ -909,11 +898,11 @@ where
 				}
 			}
 		} else {
-			if let Some(message) = &self.debug_message {
+			if let Some((msg, false)) = self.debug_message.as_ref().map(|m| (m, m.is_empty())) {
 				log::debug!(
 					target: "runtime::contracts",
-					"Debug Message: {}",
-					core::str::from_utf8(message).unwrap_or("<Invalid UTF8>"),
+					"Execution finished with debug buffer: {}",
+					core::str::from_utf8(msg).unwrap_or("<Invalid UTF8>"),
 				);
 			}
 			// Write back to the root gas meter.
@@ -972,12 +961,23 @@ where
 
 	// The transfer as performed by a call or instantiate.
 	fn initial_transfer(&self) -> DispatchResult {
+		let frame = self.top_frame();
+		let value = frame.value_transferred;
+		let subsistence_threshold = <Contracts<T>>::subsistence_threshold();
+
+		// If the value transferred to a new contract is less than the subsistence threshold
+		// we can error out early. This avoids executing the constructor in cases where
+		// we already know that the contract has too little balance.
+		if frame.entry_point == ExportedFunction::Constructor && value < subsistence_threshold {
+			return Err(<Error<T>>::NewContractNotFunded.into());
+		}
+
 		Self::transfer(
 			self.caller_is_origin(),
 			false,
 			self.caller(),
-			&self.top_frame().account_id,
-			self.top_frame().value_transferred,
+			&frame.account_id,
+			value,
 		)
 	}
 
@@ -1018,6 +1018,11 @@ where
 		self.frames().skip(1).any(|f| &f.account_id == account_id)
 	}
 
+	/// Returns whether the specified contract allows to be reentered right now.
+	fn allows_reentry(&self, id: &AccountIdOf<T>) -> bool {
+		!self.frames().any(|f| &f.account_id == id && !f.allows_reentry)
+	}
+
 	/// Increments the cached account id and returns the value to be used for the trie_id.
 	fn next_trie_seed(&mut self) -> u64 {
 		let next = if let Some(current) = self.account_counter {
@@ -1049,25 +1054,44 @@ where
 		to: T::AccountId,
 		value: BalanceOf<T>,
 		input_data: Vec<u8>,
+		allows_reentry: bool,
 	) -> Result<(ExecReturnValue, u32), (ExecError, u32)> {
-		// We ignore instantiate frames in our search for a cached contract.
-		// Otherwise it would be possible to recursively call a contract from its own
-		// constructor: We disallow calling not fully constructed contracts.
-		let cached_info = self
-			.frames()
-			.find(|f| f.entry_point == ExportedFunction::Call && f.account_id == to)
-			.and_then(|f| {
-				match &f.contract_info {
-					CachedContract::Cached(contract) => Some(contract.clone()),
-					_ => None,
-				}
-			});
-		let executable = self.push_frame(
-			FrameArgs::Call{dest: to, cached_info},
-			value,
-			gas_limit
-		)?;
-		self.run(executable, input_data)
+		// Before pushing the new frame: Protect the caller contract against reentrancy attacks.
+		// It is important to do this before calling `allows_reentry` so that a direct recursion
+		// is caught by it.
+		self.top_frame_mut().allows_reentry = allows_reentry;
+
+		let try_call = || {
+			if !self.allows_reentry(&to) {
+				return Err((<Error<T>>::ReentranceDenied.into(), 0));
+			}
+			// We ignore instantiate frames in our search for a cached contract.
+			// Otherwise it would be possible to recursively call a contract from its own
+			// constructor: We disallow calling not fully constructed contracts.
+			let cached_info = self
+				.frames()
+				.find(|f| f.entry_point == ExportedFunction::Call && f.account_id == to)
+				.and_then(|f| {
+					match &f.contract_info {
+						CachedContract::Cached(contract) => Some(contract.clone()),
+						_ => None,
+					}
+				});
+			let executable = self.push_frame(
+				FrameArgs::Call{dest: to, cached_info},
+				value,
+				gas_limit
+			)?;
+			self.run(executable, input_data)
+		};
+
+		// We need to make sure to reset `allows_reentry` even on failure.
+		let result = try_call();
+
+		// Protection is on a per call basis.
+		self.top_frame_mut().allows_reentry = true;
+
+		result
 	}
 
 	fn instantiate(
@@ -1101,7 +1125,7 @@ where
 		beneficiary: &AccountIdOf<Self::T>,
 	) -> Result<u32, (DispatchError, u32)> {
 		if self.is_recursive() {
-			return Err((Error::<T>::ReentranceDenied.into(), 0));
+			return Err((Error::<T>::TerminatedWhileReentrant.into(), 0));
 		}
 		let frame = self.top_frame_mut();
 		let info = frame.terminate();
@@ -1129,7 +1153,7 @@ where
 		delta: Vec<StorageKey>,
 	) -> Result<(u32, u32), (DispatchError, u32, u32)> {
 		if self.is_recursive() {
-			return Err((Error::<T>::ReentranceDenied.into(), 0, 0));
+			return Err((Error::<T>::TerminatedWhileReentrant.into(), 0, 0));
 		}
 		let origin_contract = self.top_frame_mut().contract_info().clone();
 		let result = Rent::<T, E>::restore_to(
@@ -1240,6 +1264,20 @@ where
 		&self.top_frame().rent_params
 	}
 
+	fn rent_status(&mut self, at_refcount: u32) -> RentStatus<Self::T> {
+		let frame = self.top_frame_mut();
+		let balance = T::Currency::free_balance(&frame.account_id);
+		let code_size = frame.rent_params.code_size;
+		let refcount = frame.rent_params.code_refcount;
+		<Rent<T, E>>::rent_status(
+			&balance,
+			&frame.contract_info(),
+			code_size,
+			refcount,
+			at_refcount,
+		)
+	}
+
 	fn gas_meter(&mut self) -> &mut GasMeter<Self::T> {
 		&mut self.top_frame_mut().nested_meter
 	}
@@ -1298,12 +1336,14 @@ mod tests {
 		exec::ExportedFunction::*,
 		Error, Weight,
 	};
+	use codec::{Encode, Decode};
 	use sp_core::Bytes;
 	use sp_runtime::DispatchError;
 	use assert_matches::assert_matches;
 	use std::{cell::RefCell, collections::HashMap, rc::Rc};
 	use pretty_assertions::{assert_eq, assert_ne};
 	use pallet_contracts_primitives::ReturnFlags;
+	use frame_support::{assert_ok, assert_err};
 
 	type MockStack<'a> = Stack<'a, Test, MockExecutable>;
 
@@ -1317,7 +1357,7 @@ mod tests {
 		<frame_system::Pallet<Test>>::events()
 			.into_iter()
 			.filter_map(|meta| match meta.event {
-				MetaEvent::pallet_contracts(contract_event) => Some(contract_event),
+				MetaEvent::Contracts(contract_event) => Some(contract_event),
 				_ => None,
 			})
 			.collect()
@@ -1721,7 +1761,7 @@ mod tests {
 		let value = Default::default();
 		let recurse_ch = MockLoader::insert(Call, |ctx, _| {
 			// Try to call into yourself.
-			let r = ctx.ext.call(0, BOB, 0, vec![]);
+			let r = ctx.ext.call(0, BOB, 0, vec![], true);
 
 			REACHED_BOTTOM.with(|reached_bottom| {
 				let mut reached_bottom = reached_bottom.borrow_mut();
@@ -1779,7 +1819,7 @@ mod tests {
 
 			// Call into CHARLIE contract.
 			assert_matches!(
-				ctx.ext.call(0, CHARLIE, 0, vec![]),
+				ctx.ext.call(0, CHARLIE, 0, vec![], true),
 				Ok(_)
 			);
 			exec_success()
@@ -1822,7 +1862,7 @@ mod tests {
 
 			// Call into charlie contract.
 			assert_matches!(
-				ctx.ext.call(0, CHARLIE, 0, vec![]),
+				ctx.ext.call(0, CHARLIE, 0, vec![], true),
 				Ok(_)
 			);
 			exec_success()
@@ -2009,7 +2049,7 @@ mod tests {
 					ctx.ext.instantiate(
 						0,
 						dummy_ch,
-						15u64,
+						Contracts::<Test>::subsistence_threshold(),
 						vec![],
 						&[],
 					),
@@ -2195,6 +2235,48 @@ mod tests {
 	}
 
 	#[test]
+	fn rent_status_works() {
+		let code_hash = MockLoader::insert(Call, |ctx, _| {
+			assert_eq!(ctx.ext.rent_status(0), RentStatus {
+				max_deposit: 80000,
+				current_deposit: 80000,
+				custom_refcount_deposit: None,
+				max_rent: 32,
+				current_rent: 32,
+				custom_refcount_rent: None,
+				_reserved: None,
+			});
+			assert_eq!(ctx.ext.rent_status(1), RentStatus {
+				max_deposit: 80000,
+				current_deposit: 80000,
+				custom_refcount_deposit: Some(80000),
+				max_rent: 32,
+				current_rent: 32,
+				custom_refcount_rent: Some(32),
+				_reserved: None,
+			});
+			exec_success()
+		});
+
+		ExtBuilder::default().build().execute_with(|| {
+			let subsistence = Contracts::<Test>::subsistence_threshold();
+			let schedule = <Test as Config>::Schedule::get();
+			let mut gas_meter = GasMeter::<Test>::new(GAS_LIMIT);
+			set_balance(&ALICE, subsistence * 10);
+			place_contract(&BOB, code_hash);
+			MockStack::run_call(
+				ALICE,
+				BOB,
+				&mut gas_meter,
+				&schedule,
+				0,
+				vec![],
+				None,
+			).unwrap();
+		});
+	}
+
+	#[test]
 	fn in_memory_changes_not_discarded() {
 		// Call stack: BOB -> CHARLIE (trap) -> BOB' (success)
 		// This tests verfies some edge case of the contract info cache:
@@ -2211,7 +2293,7 @@ mod tests {
 				assert_ne!(original_allowance, changed_allowance);
 				ctx.ext.set_rent_allowance(changed_allowance);
 				assert_eq!(
-					ctx.ext.call(0, CHARLIE, 0, vec![]).map(|v| v.0).map_err(|e| e.0),
+					ctx.ext.call(0, CHARLIE, 0, vec![], true).map(|v| v.0).map_err(|e| e.0),
 					exec_trapped()
 				);
 				assert_eq!(ctx.ext.rent_allowance(), changed_allowance);
@@ -2220,7 +2302,7 @@ mod tests {
 			exec_success()
 		});
 		let code_charlie = MockLoader::insert(Call, |ctx, _| {
-			assert!(ctx.ext.call(0, BOB, 0, vec![99]).is_ok());
+			assert!(ctx.ext.call(0, BOB, 0, vec![99], true).is_ok());
 			exec_trapped()
 		});
 
@@ -2247,8 +2329,8 @@ mod tests {
 	fn recursive_call_during_constructor_fails() {
 		let code = MockLoader::insert(Constructor, |ctx, _| {
 			assert_matches!(
-				ctx.ext.call(0, ctx.ext.address().clone(), 0, vec![]),
-				Err((ExecError{error, ..}, _)) if error == <Error<Test>>::NotCallable.into()
+				ctx.ext.call(0, ctx.ext.address().clone(), 0, vec![], true),
+				Err((ExecError{error, ..}, _)) if error == <Error<Test>>::ContractNotFound.into()
 			);
 			exec_success()
 		});
@@ -2337,5 +2419,85 @@ mod tests {
 		});
 
 		assert_eq!(&String::from_utf8(debug_buffer).unwrap(), "This is a testMore text");
+	}
+
+	#[test]
+	fn call_reentry_direct_recursion() {
+		// call the contract passed as input with disabled reentry
+		let code_bob = MockLoader::insert(Call, |ctx, _| {
+			let dest = Decode::decode(&mut ctx.input_data.as_ref()).unwrap();
+			ctx.ext.call(0, dest, 0, vec![], false).map(|v| v.0).map_err(|e| e.0)
+		});
+
+		let code_charlie = MockLoader::insert(Call, |_, _| {
+			exec_success()
+		});
+
+		ExtBuilder::default().build().execute_with(|| {
+			let schedule = <Test as Config>::Schedule::get();
+			place_contract(&BOB, code_bob);
+			place_contract(&CHARLIE, code_charlie);
+
+			// Calling another contract should succeed
+			assert_ok!(MockStack::run_call(
+				ALICE,
+				BOB,
+				&mut GasMeter::<Test>::new(GAS_LIMIT),
+				&schedule,
+				0,
+				CHARLIE.encode(),
+				None,
+			));
+
+			// Calling into oneself fails
+			assert_err!(
+				MockStack::run_call(
+					ALICE,
+					BOB,
+					&mut GasMeter::<Test>::new(GAS_LIMIT),
+					&schedule,
+					0,
+					BOB.encode(),
+					None,
+				).map_err(|e| e.0.error),
+				<Error<Test>>::ReentranceDenied,
+			);
+		});
+	}
+
+	#[test]
+	fn call_deny_reentry() {
+		let code_bob = MockLoader::insert(Call, |ctx, _| {
+			if ctx.input_data[0] == 0 {
+				ctx.ext.call(0, CHARLIE, 0, vec![], false).map(|v| v.0).map_err(|e| e.0)
+			} else {
+				exec_success()
+			}
+		});
+
+		// call BOB with input set to '1'
+		let code_charlie = MockLoader::insert(Call, |ctx, _| {
+			ctx.ext.call(0, BOB, 0, vec![1], true).map(|v| v.0).map_err(|e| e.0)
+		});
+
+		ExtBuilder::default().build().execute_with(|| {
+			let schedule = <Test as Config>::Schedule::get();
+			place_contract(&BOB, code_bob);
+			place_contract(&CHARLIE, code_charlie);
+
+			// BOB -> CHARLIE -> BOB fails as BOB denies reentry.
+			assert_err!(
+				MockStack::run_call(
+					ALICE,
+					BOB,
+					&mut GasMeter::<Test>::new(GAS_LIMIT),
+					&schedule,
+					0,
+					vec![0],
+					None,
+				).map_err(|e| e.0.error),
+				<Error<Test>>::ReentranceDenied,
+			);
+		});
 	}
 }

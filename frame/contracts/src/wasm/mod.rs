@@ -247,6 +247,7 @@ mod tests {
 			RentParams, ExecError, ErrorOrigin,
 		},
 		gas::GasMeter,
+		rent::RentStatus,
 		tests::{Test, Call, ALICE, BOB},
 	};
 	use std::collections::HashMap;
@@ -288,7 +289,14 @@ mod tests {
 	struct TransferEntry {
 		to: AccountIdOf<Test>,
 		value: u64,
+	}
+
+	#[derive(Debug, PartialEq, Eq)]
+	struct CallEntry {
+		to: AccountIdOf<Test>,
+		value: u64,
 		data: Vec<u8>,
+		allows_reentry: bool,
 	}
 
 	pub struct MockExt {
@@ -296,6 +304,7 @@ mod tests {
 		rent_allowance: u64,
 		instantiates: Vec<InstantiateEntry>,
 		terminations: Vec<TerminationEntry>,
+		calls: Vec<CallEntry>,
 		transfers: Vec<TransferEntry>,
 		restores: Vec<RestoreEntry>,
 		// (topics, data)
@@ -306,6 +315,11 @@ mod tests {
 		debug_buffer: Vec<u8>,
 	}
 
+	/// The call is mocked and just returns this hardcoded value.
+	fn call_return_data() -> Bytes {
+		Bytes(vec![0xDE, 0xAD, 0xBE, 0xEF])
+	}
+
 	impl Default for MockExt {
 		fn default() -> Self {
 			Self {
@@ -313,6 +327,7 @@ mod tests {
 				rent_allowance: Default::default(),
 				instantiates: Default::default(),
 				terminations: Default::default(),
+				calls: Default::default(),
 				transfers: Default::default(),
 				restores: Default::default(),
 				events: Default::default(),
@@ -333,13 +348,15 @@ mod tests {
 			to: AccountIdOf<Self::T>,
 			value: u64,
 			data: Vec<u8>,
+			allows_reentry: bool,
 		) -> Result<(ExecReturnValue, u32), (ExecError, u32)> {
-			self.transfers.push(TransferEntry {
+			self.calls.push(CallEntry {
 				to,
 				value,
-				data: data,
+				data,
+				allows_reentry,
 			});
-			Ok((ExecReturnValue { flags: ReturnFlags::empty(), data: Bytes(Vec::new()) }, 0))
+			Ok((ExecReturnValue { flags: ReturnFlags::empty(), data: call_return_data() }, 0))
 		}
 		fn instantiate(
 			&mut self,
@@ -373,7 +390,6 @@ mod tests {
 			self.transfers.push(TransferEntry {
 				to: to.clone(),
 				value,
-				data: Vec::new(),
 			});
 			Ok(())
 		}
@@ -452,6 +468,9 @@ mod tests {
 		fn rent_params(&self) -> &RentParams<Self::T> {
 			&self.rent_params
 		}
+		fn rent_status(&mut self, _at_refcount: u32) -> RentStatus<Self::T> {
+			Default::default()
+		}
 		fn gas_meter(&mut self) -> &mut GasMeter<Self::T> {
 			&mut self.gas_meter
 		}
@@ -522,7 +541,6 @@ mod tests {
 			&[TransferEntry {
 				to: ALICE,
 				value: 153,
-				data: Vec::new(),
 			}]
 		);
 	}
@@ -583,11 +601,192 @@ mod tests {
 		));
 
 		assert_eq!(
-			&mock_ext.transfers,
-			&[TransferEntry {
+			&mock_ext.calls,
+			&[CallEntry {
 				to: ALICE,
 				value: 6,
 				data: vec![1, 2, 3, 4],
+				allows_reentry: true,
+			}]
+		);
+	}
+
+	#[test]
+	#[cfg(feature = "unstable-interface")]
+	fn contract_call_forward_input() {
+		const CODE: &str = r#"
+(module
+	(import "__unstable__" "seal_call" (func $seal_call (param i32 i32 i32 i64 i32 i32 i32 i32 i32 i32) (result i32)))
+	(import "seal0" "seal_input" (func $seal_input (param i32 i32)))
+	(import "env" "memory" (memory 1 1))
+	(func (export "call")
+		(drop
+			(call $seal_call
+				(i32.const 1) ;; Set FORWARD_INPUT bit
+				(i32.const 4)  ;; Pointer to "callee" address.
+				(i32.const 32)  ;; Length of "callee" address.
+				(i64.const 0)  ;; How much gas to devote for the execution. 0 = all.
+				(i32.const 36) ;; Pointer to the buffer with value to transfer
+				(i32.const 8)  ;; Length of the buffer with value to transfer.
+				(i32.const 44) ;; Pointer to input data buffer address
+				(i32.const 4)  ;; Length of input data buffer
+				(i32.const 4294967295) ;; u32 max value is the sentinel value: do not copy output
+				(i32.const 0) ;; Length is ignored in this case
+			)
+		)
+
+		;; triggers a trap because we already forwarded the input
+		(call $seal_input (i32.const 1) (i32.const 44))
+	)
+
+	(func (export "deploy"))
+
+	;; Destination AccountId (ALICE)
+	(data (i32.const 4)
+		"\01\01\01\01\01\01\01\01\01\01\01\01\01\01\01\01"
+		"\01\01\01\01\01\01\01\01\01\01\01\01\01\01\01\01"
+	)
+
+	;; Amount of value to transfer.
+	;; Represented by u64 (8 bytes long) in little endian.
+	(data (i32.const 36) "\2A\00\00\00\00\00\00\00")
+
+	;; The input is ignored because we forward our own input
+	(data (i32.const 44) "\01\02\03\04")
+)
+"#;
+		let mut mock_ext = MockExt::default();
+		let input = vec![0xff, 0x2a, 0x99, 0x88];
+		frame_support::assert_err!(
+			execute(CODE, input.clone(), &mut mock_ext),
+			<Error<Test>>::InputForwarded,
+		);
+
+		assert_eq!(
+			&mock_ext.calls,
+			&[CallEntry {
+				to: ALICE,
+				value: 0x2a,
+				data: input,
+				allows_reentry: false,
+			}]
+		);
+	}
+
+	#[test]
+	#[cfg(feature = "unstable-interface")]
+	fn contract_call_clone_input() {
+		const CODE: &str = r#"
+(module
+	(import "__unstable__" "seal_call" (func $seal_call (param i32 i32 i32 i64 i32 i32 i32 i32 i32 i32) (result i32)))
+	(import "seal0" "seal_input" (func $seal_input (param i32 i32)))
+	(import "seal0" "seal_return" (func $seal_return (param i32 i32 i32)))
+	(import "env" "memory" (memory 1 1))
+	(func (export "call")
+		(drop
+			(call $seal_call
+				(i32.const 11) ;; Set FORWARD_INPUT | CLONE_INPUT | ALLOW_REENTRY bits
+				(i32.const 4)  ;; Pointer to "callee" address.
+				(i32.const 32)  ;; Length of "callee" address.
+				(i64.const 0)  ;; How much gas to devote for the execution. 0 = all.
+				(i32.const 36) ;; Pointer to the buffer with value to transfer
+				(i32.const 8)  ;; Length of the buffer with value to transfer.
+				(i32.const 44) ;; Pointer to input data buffer address
+				(i32.const 4)  ;; Length of input data buffer
+				(i32.const 4294967295) ;; u32 max value is the sentinel value: do not copy output
+				(i32.const 0) ;; Length is ignored in this case
+			)
+		)
+
+		;; works because the input was cloned
+		(call $seal_input (i32.const 0) (i32.const 44))
+
+		;; return the input to caller for inspection
+		(call $seal_return (i32.const 0) (i32.const 0) (i32.load (i32.const 44)))
+	)
+
+	(func (export "deploy"))
+
+	;; Destination AccountId (ALICE)
+	(data (i32.const 4)
+		"\01\01\01\01\01\01\01\01\01\01\01\01\01\01\01\01"
+		"\01\01\01\01\01\01\01\01\01\01\01\01\01\01\01\01"
+	)
+
+	;; Amount of value to transfer.
+	;; Represented by u64 (8 bytes long) in little endian.
+	(data (i32.const 36) "\2A\00\00\00\00\00\00\00")
+
+	;; The input is ignored because we forward our own input
+	(data (i32.const 44) "\01\02\03\04")
+)
+"#;
+		let mut mock_ext = MockExt::default();
+		let input = vec![0xff, 0x2a, 0x99, 0x88];
+		let result = execute(CODE, input.clone(), &mut mock_ext).unwrap();
+		assert_eq!(result.data.0, input);
+		assert_eq!(
+			&mock_ext.calls,
+			&[CallEntry {
+				to: ALICE,
+				value: 0x2a,
+				data: input,
+				allows_reentry: true,
+			}]
+		);
+	}
+
+	#[test]
+	#[cfg(feature = "unstable-interface")]
+	fn contract_call_tail_call() {
+		const CODE: &str = r#"
+(module
+	(import "__unstable__" "seal_call" (func $seal_call (param i32 i32 i32 i64 i32 i32 i32 i32 i32 i32) (result i32)))
+	(import "env" "memory" (memory 1 1))
+	(func (export "call")
+		(drop
+			(call $seal_call
+				(i32.const 5) ;; Set FORWARD_INPUT | TAIL_CALL bit
+				(i32.const 4)  ;; Pointer to "callee" address.
+				(i32.const 32)  ;; Length of "callee" address.
+				(i64.const 0)  ;; How much gas to devote for the execution. 0 = all.
+				(i32.const 36) ;; Pointer to the buffer with value to transfer
+				(i32.const 8)  ;; Length of the buffer with value to transfer.
+				(i32.const 0) ;; Pointer to input data buffer address
+				(i32.const 0)  ;; Length of input data buffer
+				(i32.const 4294967295) ;; u32 max value is the sentinel value: do not copy output
+				(i32.const 0) ;; Length is ignored in this case
+			)
+		)
+
+		;; a tail call never returns
+		(unreachable)
+	)
+
+	(func (export "deploy"))
+
+	;; Destination AccountId (ALICE)
+	(data (i32.const 4)
+		"\01\01\01\01\01\01\01\01\01\01\01\01\01\01\01\01"
+		"\01\01\01\01\01\01\01\01\01\01\01\01\01\01\01\01"
+	)
+
+	;; Amount of value to transfer.
+	;; Represented by u64 (8 bytes long) in little endian.
+	(data (i32.const 36) "\2A\00\00\00\00\00\00\00")
+)
+"#;
+		let mut mock_ext = MockExt::default();
+		let input = vec![0xff, 0x2a, 0x99, 0x88];
+		let result = execute(CODE, input.clone(), &mut mock_ext).unwrap();
+		assert_eq!(result.data, call_return_data());
+		assert_eq!(
+			&mock_ext.calls,
+			&[CallEntry {
+				to: ALICE,
+				value: 0x2a,
+				data: input,
+				allows_reentry: false,
 			}]
 		);
 	}
@@ -768,11 +967,12 @@ mod tests {
 		));
 
 		assert_eq!(
-			&mock_ext.transfers,
-			&[TransferEntry {
+			&mock_ext.calls,
+			&[CallEntry {
 				to: ALICE,
 				value: 6,
 				data: vec![1, 2, 3, 4],
+				allows_reentry: true,
 			}]
 		);
 	}
@@ -1817,9 +2017,14 @@ mod tests {
 		);
 	}
 
-	const CODE_RENT_PARAMS: &str = r#"
+
+
+	#[test]
+	#[cfg(feature = "unstable-interface")]
+	fn rent_params_work() {
+		const CODE_RENT_PARAMS: &str = r#"
 (module
-	(import "seal0" "seal_rent_params" (func $seal_rent_params (param i32 i32)))
+	(import "__unstable__" "seal_rent_params" (func $seal_rent_params (param i32 i32)))
 	(import "seal0" "seal_return" (func $seal_return (param i32 i32 i32)))
 	(import "env" "memory" (memory 1 1))
 
@@ -1846,9 +2051,6 @@ mod tests {
 	(func (export "deploy"))
 )
 "#;
-
-	#[test]
-	fn rent_params_work() {
 		let output = execute(
 			CODE_RENT_PARAMS,
 			vec![],
@@ -1858,9 +2060,56 @@ mod tests {
 		assert_eq!(output, ExecReturnValue { flags: ReturnFlags::empty(), data: rent_params });
 	}
 
-	const CODE_DEBUG_MESSAGE: &str = r#"
+
+
+	#[test]
+	#[cfg(feature = "unstable-interface")]
+	fn rent_status_works() {
+		const CODE_RENT_STATUS: &str = r#"
 (module
-	(import "seal0" "seal_debug_message" (func $seal_debug_message (param i32 i32) (result i32)))
+	(import "__unstable__" "seal_rent_status" (func $seal_rent_status (param i32 i32 i32)))
+	(import "seal0" "seal_return" (func $seal_return (param i32 i32 i32)))
+	(import "env" "memory" (memory 1 1))
+
+	;; [0, 4) buffer size = 128 bytes
+	(data (i32.const 0) "\80")
+
+	;; [4; inf) buffer where the result is copied
+
+	(func (export "call")
+		;; Load the rent params into memory
+		(call $seal_rent_status
+			(i32.const 1)		;; at_refcount
+			(i32.const 4)		;; Pointer to the output buffer
+			(i32.const 0)		;; Pointer to the size of the buffer
+		)
+
+		;; Return the contents of the buffer
+		(call $seal_return
+			(i32.const 0)				;; return flags
+			(i32.const 4)				;; buffer pointer
+			(i32.load (i32.const 0))	;; buffer size
+		)
+	)
+
+	(func (export "deploy"))
+)
+"#;
+		let output = execute(
+			CODE_RENT_STATUS,
+			vec![],
+			MockExt::default(),
+		).unwrap();
+		let rent_status = Bytes(<RentStatus<Test>>::default().encode());
+		assert_eq!(output, ExecReturnValue { flags: ReturnFlags::empty(), data: rent_status });
+	}
+
+	#[test]
+	#[cfg(feature = "unstable-interface")]
+	fn debug_message_works() {
+		const CODE_DEBUG_MESSAGE: &str = r#"
+(module
+	(import "__unstable__" "seal_debug_message" (func $seal_debug_message (param i32 i32) (result i32)))
 	(import "env" "memory" (memory 1 1))
 
 	(data (i32.const 0) "Hello World!")
@@ -1876,9 +2125,6 @@ mod tests {
 	(func (export "deploy"))
 )
 "#;
-
-	#[test]
-	fn debug_message_works() {
 		let mut ext = MockExt::default();
 		execute(
 			CODE_DEBUG_MESSAGE,
@@ -1889,39 +2135,39 @@ mod tests {
 		assert_eq!(std::str::from_utf8(&ext.debug_buffer).unwrap(), "Hello World!");
 	}
 
-	const CODE_DEBUG_MESSAGE_FAIL: &str = r#"
-	(module
-		(import "seal0" "seal_debug_message" (func $seal_debug_message (param i32 i32) (result i32)))
-		(import "env" "memory" (memory 1 1))
+	#[test]
+	#[cfg(feature = "unstable-interface")]
+	fn debug_message_invalid_utf8_fails() {
+		const CODE_DEBUG_MESSAGE_FAIL: &str = r#"
+(module
+	(import "__unstable__" "seal_debug_message" (func $seal_debug_message (param i32 i32) (result i32)))
+	(import "env" "memory" (memory 1 1))
 
-		(data (i32.const 0) "\fc")
+	(data (i32.const 0) "\fc")
 
-		(func (export "call")
-			(call $seal_debug_message
-				(i32.const 0)	;; Pointer to the text buffer
-				(i32.const 1)	;; The size of the buffer
-			)
-			drop
+	(func (export "call")
+		(call $seal_debug_message
+			(i32.const 0)	;; Pointer to the text buffer
+			(i32.const 1)	;; The size of the buffer
 		)
-
-		(func (export "deploy"))
+		drop
 	)
-	"#;
 
-		#[test]
-		fn debug_message_invalid_utf8_fails() {
-			let mut ext = MockExt::default();
-			let result = execute(
-				CODE_DEBUG_MESSAGE_FAIL,
-				vec![],
-				&mut ext,
-			);
-			assert_eq!(
-				result,
-				Err(ExecError {
-					error: Error::<Test>::DebugMessageInvalidUTF8.into(),
-					origin: ErrorOrigin::Caller,
-				})
-			);
-		}
+	(func (export "deploy"))
+)
+"#;
+		let mut ext = MockExt::default();
+		let result = execute(
+			CODE_DEBUG_MESSAGE_FAIL,
+			vec![],
+			&mut ext,
+		);
+		assert_eq!(
+			result,
+			Err(ExecError {
+				error: Error::<Test>::DebugMessageInvalidUTF8.into(),
+				origin: ErrorOrigin::Caller,
+			})
+		);
+	}
 }

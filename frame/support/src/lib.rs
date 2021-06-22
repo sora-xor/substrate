@@ -46,6 +46,8 @@ pub use sp_io::{storage::root as storage_root, self};
 pub use sp_runtime::RuntimeDebug;
 #[doc(hidden)]
 pub use log;
+#[doc(hidden)]
+pub use frame_metadata as metadata;
 
 #[macro_use]
 mod origin;
@@ -55,8 +57,6 @@ pub mod storage;
 mod hash;
 #[macro_use]
 pub mod event;
-#[macro_use]
-pub mod metadata;
 #[macro_use]
 pub mod genesis_config;
 #[macro_use]
@@ -76,7 +76,7 @@ pub use self::hash::{
 pub use self::storage::{
 	StorageValue, StorageMap, StorageDoubleMap, StorageNMap, StoragePrefixedMap,
 	IterableStorageMap, IterableStorageDoubleMap, IterableStorageNMap, migration,
-	bounded_vec::{self, BoundedVec},
+	bounded_vec::{BoundedVec, BoundedSlice}, weak_bounded_vec::WeakBoundedVec,
 };
 pub use self::dispatch::{Parameter, Callable};
 pub use sp_runtime::{self, ConsensusEngineId, print, traits::Printable};
@@ -321,6 +321,7 @@ macro_rules! parameter_types {
 	(IMPL_CONST $name:ident, $type:ty, $value:expr) => {
 		impl $name {
 			/// Returns the value of this parameter type.
+			#[allow(unused)]
 			pub const fn get() -> $type {
 				$value
 			}
@@ -335,6 +336,7 @@ macro_rules! parameter_types {
 	(IMPL $name:ident, $type:ty, $value:expr) => {
 		impl $name {
 			/// Returns the value of this parameter type.
+			#[allow(unused)]
 			pub fn get() -> $type {
 				$value
 			}
@@ -349,6 +351,7 @@ macro_rules! parameter_types {
 	(IMPL_STORAGE $name:ident, $type:ty, $value:expr) => {
 		impl $name {
 			/// Returns the key for this parameter type.
+			#[allow(unused)]
 			pub fn key() -> [u8; 16] {
 				$crate::sp_io::hashing::twox_128(
 					concat!(":", stringify!($name), ":").as_bytes()
@@ -359,6 +362,7 @@ macro_rules! parameter_types {
 			///
 			/// This needs to be executed in an externalities provided
 			/// environment.
+			#[allow(unused)]
 			pub fn set(value: &$type) {
 				$crate::storage::unhashed::put(&Self::key(), value);
 			}
@@ -367,6 +371,7 @@ macro_rules! parameter_types {
 			///
 			/// This needs to be executed in an externalities provided
 			/// environment.
+			#[allow(unused)]
 			pub fn get() -> $type {
 				$crate::storage::unhashed::get(&Self::key()).unwrap_or_else(|| $value)
 			}
@@ -392,7 +397,6 @@ macro_rules! parameter_types {
 }
 
 #[cfg(not(feature = "std"))]
-#[doc(inline)]
 #[macro_export]
 macro_rules! parameter_types_impl_thread_local {
 	( $( $any:tt )* ) => {
@@ -401,7 +405,6 @@ macro_rules! parameter_types_impl_thread_local {
 }
 
 #[cfg(feature = "std")]
-#[doc(inline)]
 #[macro_export]
 macro_rules! parameter_types_impl_thread_local {
 	(
@@ -498,8 +501,11 @@ pub fn debug(data: &impl sp_std::fmt::Debug) {
 
 #[doc(inline)]
 pub use frame_support_procedural::{
-	decl_storage, construct_runtime, transactional, RuntimeDebugNoBound
+	decl_storage, construct_runtime, transactional, RuntimeDebugNoBound,
 };
+
+#[doc(hidden)]
+pub use frame_support_procedural::__generate_dummy_part_checker;
 
 /// Derive [`Clone`] but do not bound any generic.
 ///
@@ -1002,7 +1008,10 @@ pub mod tests {
 			DoubleMap::insert(&key1, &(key2 + 1), &4u64);
 			DoubleMap::insert(&(key1 + 1), &key2, &4u64);
 			DoubleMap::insert(&(key1 + 1), &(key2 + 1), &4u64);
-			DoubleMap::remove_prefix(&key1);
+			assert!(matches!(
+				DoubleMap::remove_prefix(&key1, None),
+				sp_io::KillStorageResult::AllRemoved(0), // all in overlay
+			));
 			assert_eq!(DoubleMap::get(&key1, &key2), 0u64);
 			assert_eq!(DoubleMap::get(&key1, &(key2 + 1)), 0u64);
 			assert_eq!(DoubleMap::get(&(key1 + 1), &key2), 4u64);
@@ -1236,7 +1245,7 @@ pub mod pallet_prelude {
 		RuntimeDebug, storage,
 		traits::{
 			Get, Hooks, IsType, GetPalletVersion, EnsureOrigin, PalletInfoAccess, StorageInfoTrait,
-			ConstU32, GetDefault,
+			ConstU32, GetDefault, MaxEncodedLen,
 		},
 		dispatch::{DispatchResultWithPostInfo, Parameter, DispatchError, DispatchResult},
 		weights::{DispatchClass, Pays, Weight},
@@ -1393,7 +1402,7 @@ pub mod pallet_prelude {
 /// [`traits::StorageInfoTrait`] for each storage in the implementation of
 /// [`traits::StorageInfoTrait`] for the pallet.
 ///
-/// # Hooks: `#[pallet::hooks]` mandatory
+/// # Hooks: `#[pallet::hooks]` optional
 ///
 /// Implementation of `Hooks` on `Pallet` allowing to define some specific pallet logic.
 ///
@@ -1407,6 +1416,13 @@ pub mod pallet_prelude {
 /// `Hooks<BlockNumberFor<T>>` (they are defined in preludes), for the type `Pallet<T>`
 /// and with an optional where clause.
 ///
+/// If no `#[pallet::hooks]` exists, then a default implementation corresponding to the following
+/// code is automatically generated:
+/// ```ignore
+/// #[pallet::hooks]
+/// impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {}
+/// ```
+///
 /// ### Macro expansion:
 ///
 /// The macro implements the traits `OnInitialize`, `OnIdle`, `OnFinalize`, `OnRuntimeUpgrade`,
@@ -1418,7 +1434,7 @@ pub mod pallet_prelude {
 /// NOTE: The macro also adds some tracing logic when implementing the above traits. The following
 ///  hooks emit traces: `on_initialize`, `on_finalize` and `on_runtime_upgrade`.
 ///
-/// # Call: `#[pallet::call]` mandatory
+/// # Call: `#[pallet::call]` optional
 ///
 /// Implementation of pallet dispatchables.
 ///
@@ -1428,7 +1444,7 @@ pub mod pallet_prelude {
 /// impl<T: Config> Pallet<T> {
 /// 	/// $some_doc
 /// 	#[pallet::weight($ExpressionResultingInWeight)]
-/// 	$vis fn $fn_name(
+/// 	pub fn $fn_name(
 /// 		origin: OriginFor<T>,
 /// 		$some_arg: $some_type,
 /// 		// or with compact attribute: #[pallet::compact] $some_arg: $some_type,
@@ -1449,6 +1465,13 @@ pub mod pallet_prelude {
 ///
 /// All arguments must implement `Debug`, `PartialEq`, `Eq`, `Decode`, `Encode`, `Clone`. For ease
 /// of use, bound the trait `Member` available in frame_support::pallet_prelude.
+///
+/// If no `#[pallet::call]` exists, then a default implementation corresponding to the following
+/// code is automatically generated:
+/// ```ignore
+/// #[pallet::call]
+/// impl<T: Config> Pallet<T> {}
+/// ```
 ///
 /// **WARNING**: modifying dispatchables, changing their order, removing some must be done with
 /// care. Indeed this will change the outer runtime call type (which is an enum with one variant
@@ -1880,7 +1903,7 @@ pub mod pallet_prelude {
 /// 	impl<T: Config> Pallet<T> {
 /// 		/// Doc comment put in metadata
 /// 		#[pallet::weight(0)] // Defines weight for call (function parameters are in scope)
-/// 		fn toto(
+/// 		pub fn toto(
 /// 			origin: OriginFor<T>,
 /// 			#[pallet::compact] _foo: u32,
 /// 		) -> DispatchResultWithPostInfo {
@@ -2054,7 +2077,7 @@ pub mod pallet_prelude {
 /// 	impl<T: Config<I>, I: 'static> Pallet<T, I> {
 /// 		/// Doc comment put in metadata
 /// 		#[pallet::weight(0)]
-/// 		fn toto(origin: OriginFor<T>, #[pallet::compact] _foo: u32) -> DispatchResultWithPostInfo {
+/// 		pub fn toto(origin: OriginFor<T>, #[pallet::compact] _foo: u32) -> DispatchResultWithPostInfo {
 /// 			let _ = origin;
 /// 			unimplemented!();
 /// 		}
@@ -2322,3 +2345,7 @@ pub mod pallet_prelude {
 /// * use the newest nightly possible.
 ///
 pub use frame_support_procedural::pallet;
+
+/// The `max_encoded_len` module contains the `MaxEncodedLen` trait and derive macro, which is
+/// useful for computing upper bounds on storage size.
+pub use max_encoded_len;
