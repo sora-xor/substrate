@@ -234,7 +234,7 @@ pub mod pallet {
 
 	#[pallet::genesis_build]
 	impl<T: Config> GenesisBuild<T> for GenesisConfig<T> {
-		fn build(&self) {
+        fn build(&self) {
 			use sp_runtime::traits::Saturating;
 
 			// Generate initial vesting configuration
@@ -251,17 +251,14 @@ pub mod pallet {
 				let per_block = locked / length_as_balance.max(sp_runtime::traits::One::one());
 				let vesting_info = VestingInfo::try_new::<T>(locked, per_block, begin)
 					.expect("Invalid VestingInfo params at genesis");
-				let schedules: BoundedVec<
-					VestingInfo<BalanceOf<T>, T::BlockNumber>,
-					T::MaxVestingSchedules
-				> = vec![vesting_info].try_into().expect("Too many vesting schedules at genesis.");
 
-				Vesting::<T>::insert(who, schedules);
+				Vesting::<T>::try_append(who, vesting_info)
+					.expect("Too many vesting schedules at genesis.");
 				let reasons = WithdrawReasons::TRANSFER | WithdrawReasons::RESERVE;
 				T::Currency::set_lock(VESTING_ID, who, locked, reasons);
 			}
 		}
-	}
+    }
 
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
@@ -746,17 +743,24 @@ mod tests {
 
 	pub struct ExtBuilder {
 		existential_deposit: u64,
+		vesting_genesis_config: Option<Vec<(u64, u64, u64, u64)>>,
 	}
+
 	impl Default for ExtBuilder {
 		fn default() -> Self {
 			Self {
 				existential_deposit: 1,
+				vesting_genesis_config: None,
 			}
 		}
 	}
 	impl ExtBuilder {
 		pub fn existential_deposit(mut self, existential_deposit: u64) -> Self {
 			self.existential_deposit = existential_deposit;
+			self
+		}
+		pub fn vesting_genesis_config(mut self, config: Vec<(u64, u64, u64, u64)>) -> Self {
+			self.vesting_genesis_config = Some(config);
 			self
 		}
 		pub fn build(self) -> sp_io::TestExternalities {
@@ -771,18 +775,25 @@ mod tests {
 					(12, 10 * self.existential_deposit)
 				],
 			}.assimilate_storage(&mut t).unwrap();
-			pallet_vesting::GenesisConfig::<Test> {
-				vesting: vec![
+
+			let vesting = if let Some(vesting_config) = self.vesting_genesis_config {
+				vesting_config
+			} else {
+				vec![
 					(1, 0, 10, 5 * self.existential_deposit),
 					(2, 10, 20, 0),
 					(12, 10, 20, 5 * self.existential_deposit)
-				],
+				]
+			};
+
+			pallet_vesting::GenesisConfig::<Test> {
+				vesting
 			}.assimilate_storage(&mut t).unwrap();
 			let mut ext = sp_io::TestExternalities::new(t);
 			ext.execute_with(|| System::set_block_number(1));
 			ext
 		}
-	}
+    }
 
 	#[test]
 	fn check_vesting_status() { // TODO update to reflect multiple schedules
@@ -1506,7 +1517,7 @@ mod tests {
 
 	#[test]
 	fn merge_schedules_throws_proper_errors() {
-		/* Schedule index out of bounds */
+		// Schedule index out of bounds
 		ExtBuilder::default()
 			.existential_deposit(256)
 			.build()
@@ -1553,8 +1564,37 @@ mod tests {
 
 	#[test]
 	fn generates_multiple_schedules_from_genesis_config() {
-		/* Panics if too many schedules are specified */
-		/* Succesfuly creates multiple schedules */
+		let existential_deposit = 256;
+		let vesting_config = vec![
+			// 5 * existential_deposit locked
+			(1, 0, 10, 5 * existential_deposit),
+			// 1 * existential_deposit locked
+			(2, 10, 20, 19 * existential_deposit),
+			// 2 * existential_deposit locked
+			(2, 10, 20, 17 * existential_deposit),
+			// 1 * existential_deposit locked
+			(12, 10, 20, 9 * existential_deposit),
+			// 2 * existential_deposit locked
+			(12, 10, 20, 7 * existential_deposit),
+			// 3 * existential_deposit locked
+			(12, 10, 20, 4 * existential_deposit),
+		];
+		ExtBuilder::default()
+			.existential_deposit(existential_deposit)
+			.vesting_genesis_config(vesting_config)
+			.build()
+			.execute_with(|| {
+				let user1_sched1 = VestingInfo::try_new::<Test>(
+					5 * existential_deposit,
+					132,
+					0u64,
+				).unwrap();
+				assert_eq!(Vesting::vesting(&1).unwrap().len(), 1);
+				assert_eq!(Vesting::vesting(&1).unwrap(), vec![user1_sched1].into());
+
+				assert_eq!(Vesting::vesting(&2).unwrap().len(), 2);
+				assert_eq!(Vesting::vesting(&12).unwrap().len(), 3);
+			});
 	}
 
 
@@ -1642,4 +1682,5 @@ mod tests {
 
 	}
 
+	// TODO AmountLow
 }
