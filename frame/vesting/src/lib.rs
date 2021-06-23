@@ -1571,29 +1571,39 @@ mod tests {
 			// 1 * existential_deposit locked
 			(2, 10, 20, 19 * existential_deposit),
 			// 2 * existential_deposit locked
-			(2, 10, 20, 17 * existential_deposit),
+			(2, 10, 20, 18 * existential_deposit),
 			// 1 * existential_deposit locked
 			(12, 10, 20, 9 * existential_deposit),
 			// 2 * existential_deposit locked
-			(12, 10, 20, 7 * existential_deposit),
+			(12, 10, 20, 8 * existential_deposit),
 			// 3 * existential_deposit locked
-			(12, 10, 20, 4 * existential_deposit),
+			(12, 10, 20, 7 * existential_deposit),
 		];
 		ExtBuilder::default()
 			.existential_deposit(existential_deposit)
 			.vesting_genesis_config(vesting_config)
 			.build()
 			.execute_with(|| {
-				let user1_sched1 = VestingInfo::try_new::<Test>(
-					5 * existential_deposit,
-					132,
-					0u64,
-				).unwrap();
-				assert_eq!(Vesting::vesting(&1).unwrap().len(), 1);
-				assert_eq!(Vesting::vesting(&1).unwrap(), vec![user1_sched1].into());
+				let user1_sched1 =
+					VestingInfo::try_new::<Test>(5 * existential_deposit, 128, 0u64).unwrap();
+				assert_eq!(Vesting::vesting(&1).unwrap(), vec![user1_sched1]);
 
-				assert_eq!(Vesting::vesting(&2).unwrap().len(), 2);
-				assert_eq!(Vesting::vesting(&12).unwrap().len(), 3);
+				let user2_sched1 =
+					VestingInfo::try_new::<Test>(1 * existential_deposit, 12, 10u64).unwrap();
+				let user2_sched2 =
+					VestingInfo::try_new::<Test>(2 * existential_deposit, 25, 10u64).unwrap();
+				assert_eq!(Vesting::vesting(&2).unwrap(), vec![user2_sched1, user2_sched2]);
+
+				let user12_sched1 =
+					VestingInfo::try_new::<Test>(1 * existential_deposit, 12, 10u64).unwrap();
+				let user12_sched2 =
+					VestingInfo::try_new::<Test>(2 * existential_deposit, 25, 10u64).unwrap();
+				let user12_sched3 =
+					VestingInfo::try_new::<Test>(3 * existential_deposit, 38, 10u64).unwrap();
+				assert_eq!(
+					Vesting::vesting(&12).unwrap(),
+					vec![user12_sched1, user12_sched2, user12_sched3]
+				);
 			});
 	}
 
