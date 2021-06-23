@@ -1143,19 +1143,22 @@ mod tests {
 
 	#[test]
 	fn max_vesting_schedules_bounds_vesting_schedules() {
+		let existential_deposit = 256;
+		// Test `vested_transfer`
 		ExtBuilder::default()
-			.existential_deposit(256)
+			.existential_deposit(existential_deposit)
 			.build()
 			.execute_with(|| {
-				let new_vesting_schedule = VestingInfo::try_new::<Test>(
-					256 * 5,
-					64, // Vesting over 20 blocks
-					10,
-				).unwrap();
+				let new_vesting_schedule =
+					VestingInfo::try_new::<Test>(existential_deposit * 5, existential_deposit, 10)
+						.unwrap();
 
 				assert_eq!(Vesting::vesting(&3), None);
-				for _ in 0..<Test as Config>::MaxVestingSchedules::get() {
-					assert_eq!(Vesting::vested_transfer(Some(4).into(), 3, new_vesting_schedule), Ok(()));
+				for _ in 0 .. <Test as Config>::MaxVestingSchedules::get() {
+					assert_eq!(
+						Vesting::vested_transfer(Some(4).into(), 3, new_vesting_schedule),
+						Ok(())
+					);
 				}
 				assert_noop!(
 					Vesting::vested_transfer(Some(4).into(), 3, new_vesting_schedule),
@@ -1163,140 +1166,161 @@ mod tests {
 				);
 			});
 
+		// Test `force_vested_transfer`
 		ExtBuilder::default()
-			.existential_deposit(256)
+			.existential_deposit(existential_deposit)
 			.build()
 			.execute_with(|| {
-				let new_vesting_schedule = VestingInfo::try_new::<Test>(
-					256 * 5,
-					64, // Vesting over 20 blocks
-					10,
-				).unwrap();
+				let new_vesting_schedule =
+					VestingInfo::try_new::<Test>(existential_deposit * 5, existential_deposit, 10)
+						.unwrap();
 
 				assert_eq!(Vesting::vesting(&3), None);
-				for _ in 0..<Test as Config>::MaxVestingSchedules::get() {
+				for _ in 0 .. <Test as Config>::MaxVestingSchedules::get() {
 					assert_eq!(
-						Vesting::force_vested_transfer(RawOrigin::Root.into(), 4, 3, new_vesting_schedule),
+						Vesting::force_vested_transfer(
+							RawOrigin::Root.into(),
+							4,
+							3,
+							new_vesting_schedule
+						),
 						Ok(())
 					);
 				}
 				assert_noop!(
-					Vesting::force_vested_transfer(RawOrigin::Root.into(), 4, 3, new_vesting_schedule),
+					Vesting::force_vested_transfer(
+						RawOrigin::Root.into(),
+						4,
+						3,
+						new_vesting_schedule
+					),
 					Error::<Test>::AtMaxVestingSchedules,
 				);
 			});
 	}
 
 	#[test]
-	fn merge_schedules_basics_works() {
+	fn merge_schedules_that_have_not_started() {
 		// Merging schedules that have not started works
+		let existential_deposit = 256;
 		ExtBuilder::default()
-			.existential_deposit(256)
+			.existential_deposit(existential_deposit)
 			.build()
 			.execute_with(|| {
 				// Account 2 should already have a vesting schedule.
-				let sched_0 = VestingInfo::try_new::<Test>(
-					256 * 20,
-					256, // Vesting over 20 blocks
-					10,
-				).unwrap();
-				assert_eq!(Vesting::vesting(&2).unwrap()[0], sched_0);
-				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
+				let sched0 =
+					VestingInfo::try_new::<Test>(existential_deposit * 20, existential_deposit, 10)
+						.unwrap();
+				assert_eq!(Vesting::vesting(&2).unwrap(), vec![sched0]);
 				assert_eq!(Balances::usable_balance(&2), 0);
 
 				// Add a schedule that is identical to the one that already exists
-				Vesting::vested_transfer(Some(3).into(), 2, sched_0).unwrap();
-				assert_eq!(Vesting::vesting(&2).unwrap()[1], sched_0);
-				assert_eq!(Vesting::vesting(&2).unwrap().len(), 2);
+				Vesting::vested_transfer(Some(3).into(), 2, sched0).unwrap();
+				assert_eq!(Vesting::vesting(&2).unwrap(), vec![sched0, sched0]);
 				assert_eq!(Balances::usable_balance(&2), 0);
 				Vesting::merge_schedules(Some(2).into(), 0, 1).unwrap();
-				// Since we merged identical schedules, the new schedule starts and finishes at the same
+
+				// Since we merged identical schedules, the new schedule finishes at the same
 				// time as the original, just with double the amount
-				let sched_1 = VestingInfo::try_new::<Test>(
-					sched_0.locked() * 2,
-					sched_0.per_block() * 2,
+				let sched1 = VestingInfo::try_new::<Test>(
+					sched0.locked() * 2,
+					sched0.per_block() * 2,
 					10, // starts at the block the schedules are merged
-				).unwrap();
-				// The two schedules have been merged so they now only have 1
-				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
-				assert_eq!(Vesting::vesting(&2).unwrap()[0], sched_1);
+				)
+				.unwrap();
+				assert_eq!(Vesting::vesting(&2).unwrap(), vec![sched1]);
+
 				assert_eq!(Balances::usable_balance(&2), 0);
 			});
+	}
 
+	#[test]
+	fn merge_ongoing_schedules() {
 		// Merging two schedules that have started will vest both before merging
+		let existential_deposit = 256;
 		ExtBuilder::default()
-			.existential_deposit(256)
+			.existential_deposit(existential_deposit)
 			.build()
 			.execute_with(|| {
 				// Account 2 should already have a vesting schedule.
-				let sched_0 = VestingInfo::try_new::<Test>(
-					256 * 20,
-					256, // Vesting over 20 blocks
+				let sched0 = VestingInfo::try_new::<Test>(
+					existential_deposit * 20,
+					existential_deposit, // Vest over 20 blocks
 					10,
-				).unwrap();
-				assert_eq!(Vesting::vesting(&2).unwrap()[0], sched_0);
-				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
+				)
+				.unwrap();
+				assert_eq!(Vesting::vesting(&2).unwrap(), vec![sched0]);
 
-				let sched_1 = VestingInfo::try_new::<Test>(
+				let sched1 = VestingInfo::try_new::<Test>(
 					300 * 10,
 					300, // Vest over 10 blocks
-					 sched_0.starting_block() + 5,
-				).unwrap();
-				Vesting::vested_transfer(Some(4).into(), 2, sched_1).unwrap();
+					sched0.starting_block() + 5,
+				)
+				.unwrap();
+				Vesting::vested_transfer(Some(4).into(), 2, sched1).unwrap();
 				assert_eq!(Vesting::vesting(&2).unwrap().len(), 2);
-				assert_eq!(Vesting::vesting(&2).unwrap()[1], sched_1);
+				assert_eq!(Vesting::vesting(&2).unwrap(), vec![sched0, sched1]);
 
 				// Got to half way through the second schedule where both schedules are actively vesting
-				let cur_block = (sched_1.ending_block::<Identity>() - sched_1.starting_block()) / 2
-					+ sched_1.starting_block();
+				let cur_block = (sched1.ending_block::<Identity>() - sched1.starting_block()) / 2 +
+					sched1.starting_block();
 				assert_eq!(cur_block, 20);
 				System::set_block_number(cur_block);
+
 				// user2 has no usable balances prior to the merge because they have not vested yet
 				assert_eq!(Balances::usable_balance(&2), 0);
 				Vesting::merge_schedules(Some(2).into(), 0, 1).unwrap();
+
 				// Merging schedules vests all pre-existing schedules prior to merging, which is reflected
 				// in user2's updated usable balance
-				let sched_0_vested_now = sched_0.per_block() * (cur_block - sched_0.starting_block());
-				let sched_1_vested_now = sched_1.per_block() * (cur_block - sched_1.starting_block());
-				assert_eq!(Balances::usable_balance(&2), sched_0_vested_now + sched_1_vested_now);
+				let sched0_vested_now = sched0.per_block() * (cur_block - sched0.starting_block());
+				let sched1_vested_now = sched1.per_block() * (cur_block - sched1.starting_block());
+				assert_eq!(Balances::usable_balance(&2), sched0_vested_now + sched1_vested_now);
+
 				// The locked amount is the sum of schedules locked minus the amount that each schedule
 				// has vested up until the current block.
-				let sched_2_locked = sched_1.locked_at::<Identity>(cur_block)
-					.saturating_add(sched_0.locked_at::<Identity>(cur_block));
-				// End block of the new schedule is the greater of either schedule
-				let sched_2_end = sched_1.ending_block::<Identity>()
-					.max(sched_0.ending_block::<Identity>());
-				let sched_2_remaining_blocks = sched_2_end - cur_block;
-				let sched_2_per_block = sched_2_locked / sched_2_remaining_blocks;
-				let sched_2 = VestingInfo::try_new::<Test>(
-					sched_2_locked,
-					sched_2_per_block,
-					cur_block,
-				).unwrap();
-				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
-				assert_eq!(Vesting::vesting(&2).unwrap()[0], sched_2);
+				let sched2_locked = sched1
+					.locked_at::<Identity>(cur_block)
+					.saturating_add(sched0.locked_at::<Identity>(cur_block));
+				// End block of the new schedule is the greater of either merged schedule
+				let sched2_end =
+					sched1.ending_block::<Identity>().max(sched0.ending_block::<Identity>());
+				let sched2_remaining_blocks = sched2_end - cur_block;
+				let sched2_per_block = sched2_locked / sched2_remaining_blocks;
+				let sched2 =
+					VestingInfo::try_new::<Test>(sched2_locked, sched2_per_block, cur_block)
+						.unwrap();
+				assert_eq!(Vesting::vesting(&2).unwrap(), vec![sched2]);
 			});
+	}
 
-		// Schedules being merged are removed, other schedules shift left and the new schedule is last
+	#[test]
+	fn merging_shifts_other_schedules_index() {
+		// Schedules being merged are filtered out, schedules to the right of any merged
+		// schedule shift left and the new schedule is last
+		let existential_deposit = 256;
 		ExtBuilder::default()
-			.existential_deposit(256)
+			.existential_deposit(existential_deposit)
 			.build()
 			.execute_with(|| {
-				let sched_0 =  VestingInfo::try_new::<Test>(
-					256 * 10,
-					256, // Vesting over 10 blocks
+				let sched0 = VestingInfo::try_new::<Test>(
+					existential_deposit * 10,
+					existential_deposit, // Vesting over 10 blocks
 					10,
-				).unwrap();
-				let sched_1 =  VestingInfo::try_new::<Test>(
-					256 * 11,
-					256, // Vesting over 11 blocks
+				)
+				.unwrap();
+				let sched1 = VestingInfo::try_new::<Test>(
+					existential_deposit * 11,
+					existential_deposit, // Vesting over 11 blocks
 					11,
-				).unwrap();
-				let sched_2 =  VestingInfo::try_new::<Test>(
-					256 * 12,
-					256, // Vesting over 12 blocks
+				)
+				.unwrap();
+				let sched2 = VestingInfo::try_new::<Test>(
+					existential_deposit * 12,
+					existential_deposit, // Vesting over 12 blocks
 					12,
-				).unwrap();
+				)
+				.unwrap();
 
 				// Account 3 start out with no schedules
 				assert_eq!(Vesting::vesting(&3), None);
@@ -1304,262 +1328,241 @@ mod tests {
 				let cur_block = 1;
 				assert_eq!(System::block_number(), cur_block);
 
-				// Transfer the above 3 schedules to user account 3.
-				Vesting::vested_transfer(Some(4).into(), 3, sched_0).unwrap();
-				Vesting::vested_transfer(Some(4).into(), 3, sched_1).unwrap();
-				Vesting::vested_transfer(Some(4).into(), 3, sched_2).unwrap();
-				assert_eq!(Vesting::vesting(&3).unwrap().len(), 3);
+				// Transfer the above 3 schedules to account 3
+				Vesting::vested_transfer(Some(4).into(), 3, sched0).unwrap();
+				Vesting::vested_transfer(Some(4).into(), 3, sched1).unwrap();
+				Vesting::vested_transfer(Some(4).into(), 3, sched2).unwrap();
+
 				// With no schedules vested or merged they are in the order they are created
-				assert_eq!(Vesting::vesting(&3).unwrap(), vec![sched_0, sched_1, sched_2]);
+				assert_eq!(Vesting::vesting(&3).unwrap(), vec![sched0, sched1, sched2]);
 
-				// Create the merged schedule of sched_0 & sched_2
-				let sched_3_start = sched_1.starting_block()
-					.max(sched_2.starting_block());
-				let sched_3_locked = sched_2.locked_at::<Identity>(cur_block)
-					.saturating_add(sched_0.locked_at::<Identity>(cur_block));
+				// Create the merged schedule of sched0 & sched2
+				let sched3_start =
+					sched1.starting_block().max(sched2.starting_block()).max(cur_block);
+				let sched3_locked = sched2
+					.locked_at::<Identity>(cur_block)
+					.saturating_add(sched0.locked_at::<Identity>(cur_block));
 				// End block of the new schedule is the greater of either schedule
-				let sched_3_end = sched_2.ending_block::<Identity>()
-					.max(sched_0.ending_block::<Identity>());
-				let sched_3_remaining_blocks = sched_3_end - sched_3_start;
-				let sched_3_per_block = sched_3_locked / sched_3_remaining_blocks;
-				let sched_3 =  VestingInfo::try_new::<Test>(
-					sched_3_locked,
-					sched_3_per_block,
-					sched_3_start,
-				).unwrap();
+				let sched3_end =
+					sched2.ending_block::<Identity>().max(sched0.ending_block::<Identity>());
+				let sched3_remaining_blocks = sched3_end - sched3_start;
+				let sched3_per_block = sched3_locked / sched3_remaining_blocks;
+				let sched3 =
+					VestingInfo::try_new::<Test>(sched3_locked, sched3_per_block, sched3_start)
+						.unwrap();
 
-				// Merge sched_0 & sched_2
 				Vesting::merge_schedules(Some(3).into(), 0, 2).unwrap();
-				// 2 of the schedules are merged and 1 new one is created
-				assert_eq!(Vesting::vesting(&3).unwrap().len(), 2);
 				// The not touched schedule moves left and the new merged schedule is appended
-				assert_eq!(Vesting::vesting(&3).unwrap(), vec![sched_1, sched_3])
+				assert_eq!(Vesting::vesting(&3).unwrap(), vec![sched1, sched3])
 			});
+	}
 
+	#[test]
+	fn merge_ongoing_schedule_and_yet_to_be_started_schedule() {
 		// Merging an ongoing schedule and one that has not started yet works
+		let existential_deposit = 256;
 		ExtBuilder::default()
-			.existential_deposit(256)
+			.existential_deposit(existential_deposit)
 			.build()
 			.execute_with(|| {
 				// Account 2 should already have a vesting schedule.
-				let sched_0 =  VestingInfo::try_new::<Test>(
-					256 * 20,
-					256, // Vesting over 20 blocks
+				let sched0 = VestingInfo::try_new::<Test>(
+					existential_deposit * 20,
+					existential_deposit, // Vesting over 20 blocks
 					10,
-				).unwrap();
-				assert_eq!(Vesting::vesting(&2).unwrap()[0], sched_0);
+				)
+				.unwrap();
+				assert_eq!(Vesting::vesting(&2).unwrap()[0], sched0);
 				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
 
 				// Fast forward to half way through the life of sched_1
-				let mut cur_block = sched_0.starting_block() + sched_0.ending_block::<Identity>() / 2;
+				let mut cur_block = sched0.starting_block() + sched0.ending_block::<Identity>() / 2;
 				System::set_block_number(cur_block);
 				assert_eq!(Balances::usable_balance(&2), 0);
 				// We are also testing the behavior of when vest has been called on one of the
 				// schedules prior to merging.
 				Vesting::vest(Some(2).into()).unwrap();
-				let mut sched_0_vested_now = (cur_block - sched_0.starting_block()) * sched_0.per_block();
-				assert_eq!(Balances::usable_balance(&2), sched_0_vested_now);
-
+				let mut sched0_vested_now =
+					(cur_block - sched0.starting_block()) * sched0.per_block();
+				assert_eq!(Balances::usable_balance(&2), sched0_vested_now);
 
 				// Go forward a block
 				cur_block += 1;
 				System::set_block_number(cur_block);
-				sched_0_vested_now += sched_0.per_block();
-				// And add a schedule that starts after this block, but before sched_0 finishes.
-				let sched_1 =  VestingInfo::try_new::<Test>(
-					256 * 10,
-					1, // Vesting over 256 * 10 blocks
+				sched0_vested_now += sched0.per_block();
+				// And add a schedule that starts after this block, but before sched0 finishes.
+				let sched1 = VestingInfo::try_new::<Test>(
+					existential_deposit * 10,
+					1, // Vesting over 256 * 10 (2560) blocks
 					cur_block + 1,
-				).unwrap();
-				Vesting::vested_transfer(Some(4).into(), 2, sched_1).unwrap();
+				)
+				.unwrap();
+				Vesting::vested_transfer(Some(4).into(), 2, sched1).unwrap();
 
-				// Merge the schedules before sched_1 starts
-				let sched_2_start = sched_1.starting_block();
-				let sched_2_locked = sched_0.locked_at::<Identity>(cur_block)
-					.saturating_add(sched_1.locked_at::<Identity>(cur_block));
+				// Merge the schedules before sched1 starts
+				let sched2_start = sched1.starting_block();
+				let sched2_locked = sched0
+					.locked_at::<Identity>(cur_block)
+					.saturating_add(sched1.locked_at::<Identity>(cur_block));
 				// End block of the new schedule is the greater of either schedule
-				let sched_2_end = sched_0.ending_block::<Identity>()
-					.max(sched_1.ending_block::<Identity>());
-				let sched_2_remaining_blocks = sched_2_end - sched_2_start;
-				let sched_2_per_block = sched_2_locked / sched_2_remaining_blocks;
-				let sched_2 =  VestingInfo::try_new::<Test>(
-					sched_2_locked,
-					sched_2_per_block,
-					sched_2_start,
-				).unwrap();
+				let sched2_end =
+					sched0.ending_block::<Identity>().max(sched1.ending_block::<Identity>());
+				let sched2_remaining_blocks = sched2_end - sched2_start;
+				let sched2_per_block = sched2_locked / sched2_remaining_blocks;
+				let sched2 =
+					VestingInfo::try_new::<Test>(sched2_locked, sched2_per_block, sched2_start)
+						.unwrap();
 				Vesting::merge_schedules(Some(2).into(), 0, 1).unwrap();
-				assert_eq!(Balances::usable_balance(&2), sched_0_vested_now);
-				assert_eq!(Vesting::vesting(&2).unwrap(), vec![sched_2]);
+				assert_eq!(Balances::usable_balance(&2), sched0_vested_now);
+				assert_eq!(Vesting::vesting(&2).unwrap(), vec![sched2]);
 			});
 	}
 
 	#[test]
 	fn merge_schedules_with_zero_values_does_not_create_new_schedules() {
-		ExtBuilder::default()
-			.existential_deposit(256)
-			.build()
-			.execute_with(|| {
-
-			});
+		ExtBuilder::default().existential_deposit(256).build().execute_with(|| {});
 	}
 
 	#[test]
-	fn merge_schedules_that_are_over_works() {
+	fn merge_finishing_and_ongoing_schedule() {
 		// If a schedule finishes by the block we treat the ongoing schedule as the merged one
+		let existential_deposit = 256;
 		ExtBuilder::default()
-			.existential_deposit(256)
+			.existential_deposit(existential_deposit)
 			.build()
 			.execute_with(|| {
 				// Account 2 should already have a vesting schedule.
-				let sched_0 =  VestingInfo::try_new::<Test>(
-					256 * 20,
-					256, // Vesting over 20 blocks
-					10,
-				).unwrap();
-				assert_eq!(sched_0.ending_block::<Identity>(), 30);
-				assert_eq!(Vesting::vesting(&2).unwrap()[0], sched_0);
-				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
+				let sched0 =
+					VestingInfo::try_new::<Test>(existential_deposit * 20, existential_deposit, 10)
+						.unwrap();
+				assert_eq!(sched0.ending_block::<Identity>(), 30);
+				assert_eq!(Vesting::vesting(&2).unwrap(), vec![sched0]);
 
-				let sched_1 =  VestingInfo::try_new::<Test>(
-					256 * 40,
-					256, // Vesting over 40 blocks
-					10,
-				).unwrap();
-				assert_eq!(sched_1.ending_block::<Identity>(), 50);
-				Vesting::vested_transfer(Some(4).into(), 2, sched_1).unwrap();
+				let sched1 =
+					VestingInfo::try_new::<Test>(existential_deposit * 40, existential_deposit, 10)
+						.unwrap();
+				assert_eq!(sched1.ending_block::<Identity>(), 50);
+				Vesting::vested_transfer(Some(4).into(), 2, sched1).unwrap();
 
 				// Transfer a 3rd schedule, so we can demonstrate how schedule indices change
 				// (We are not merging this schedule)
-				let sched_2 =  VestingInfo::try_new::<Test>(
-					256 * 30,
-					256, // Vesting over 30 blocks
-					10,
-				).unwrap();
-				Vesting::vested_transfer(Some(3).into(), 2, sched_2).unwrap();
+				let sched2 =
+					VestingInfo::try_new::<Test>(existential_deposit * 30, existential_deposit, 10)
+						.unwrap();
+				Vesting::vested_transfer(Some(3).into(), 2, sched2).unwrap();
 
-				// Current schedule order: sched_0, sched_1, sched_2
-				assert_eq!(Vesting::vesting(&2).unwrap().len(), 3);
-				assert_eq!(Vesting::vesting(&2).unwrap()[0], sched_0);
-				assert_eq!(Vesting::vesting(&2).unwrap()[1], sched_1);
-				assert_eq!(Vesting::vesting(&2).unwrap()[2], sched_2);
+				// Current schedule order, prior to any merging
+				assert_eq!(Vesting::vesting(&2).unwrap(), vec![sched0, sched1, sched2]);
 
-				// Fast forward to sched_0's end block
-				System::set_block_number(sched_0.ending_block::<Identity>());
+				// Fast forward to sched0's end block
+				let current_block = sched0.ending_block::<Identity>();
+				System::set_block_number(current_block);
+
 				assert_eq!(System::block_number(), 30);
 				// Prior to merge_schedules and with no vest/vest_other called the user has no usable
 				// balance.
 				assert_eq!(Balances::usable_balance(&2), 0);
 				Vesting::merge_schedules(Some(2).into(), 0, 1).unwrap();
-				// sched_0 has been pruned since merge schedules vested it
-				assert_eq!(Vesting::vesting(&2).unwrap().len(), 2);
-				// sched_2 is now the first, since sched_0 & sched_1 get pulled out
-				assert_eq!(Vesting::vesting(&2).unwrap()[0], sched_2);
-				// sched_1 is now the last schedule as it gets treated like the new merged schedule
-				// by getting pushed onto back of the vesting schedules vec.
-				assert_eq!(Vesting::vesting(&2).unwrap()[1], sched_1);
-				let sched_0_vested_now = sched_0.per_block()
-					* (sched_0.ending_block::<Identity>() - sched_0.starting_block());
-				let sched_1_vested_now = sched_1.per_block() * (30 - sched_1.starting_block());
-				let sched_2_vested_now = sched_2.per_block() * (30 - sched_2.starting_block());
+
+				// sched2 is now the first, since sched0 & sched1 get filtered out while "merging".
+				// sched1 gets treated like the new merged schedule by getting pushed onto back
+				// of the vesting schedules vec. Note: sched0 finished at the current block.
+				assert_eq!(Vesting::vesting(&2).unwrap(), vec![sched2, sched1]);
+
+				let sched0_vested_now = sched0.per_block() *
+					(sched0.ending_block::<Identity>() - sched0.starting_block());
+				let sched1_vested_now =
+					sched1.per_block() * (current_block - sched1.starting_block());
+				let sched2_vested_now =
+					sched2.per_block() * (current_block - sched2.starting_block());
 				// The users usable balance after merging includes all pre-existing
-				// schedules vested through the current block
+				// schedules vested through the current block, including schedules not merged
 				assert_eq!(
 					Balances::usable_balance(&2),
-					sched_0_vested_now + sched_1_vested_now + sched_2_vested_now
+					sched0_vested_now + sched1_vested_now + sched2_vested_now
 				);
 			});
+	}
 
-
+	#[test]
+	fn merge_finishing_schedules_does_not_create_a_new_one() {
 		// If both schedules finish by the current block we don't create new one
+		let existential_deposit = 256;
 		ExtBuilder::default()
-			.existential_deposit(256)
+			.existential_deposit(existential_deposit)
 			.build()
 			.execute_with(|| {
 				// Account 2 should already have a vesting schedule.
-				let sched_0 =  VestingInfo::try_new::<Test>(
-					256 * 20,
-					256, // Vesting over 20 blocks
-					10,
-				).unwrap();
-				assert_eq!(sched_0.ending_block::<Identity>(), 30);
-				assert_eq!(Vesting::vesting(&2).unwrap()[0], sched_0);
+				let sched0 =
+					VestingInfo::try_new::<Test>(existential_deposit * 20, existential_deposit, 10)
+						.unwrap();
+				assert_eq!(sched0.ending_block::<Identity>(), 30);
+				assert_eq!(Vesting::vesting(&2).unwrap()[0], sched0);
 				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
 
-				let sched_1 =  VestingInfo::try_new::<Test>(
-					256 * 30,
-					256, // Vesting over 30 blocks
-					10,
-				).unwrap();
-				assert_eq!(sched_1.ending_block::<Identity>(), 40);
-				Vesting::vested_transfer(Some(3).into(), 2, sched_1).unwrap();
+				let sched1 =
+					VestingInfo::try_new::<Test>(existential_deposit * 30, existential_deposit, 10)
+						.unwrap();
+				assert_eq!(sched1.ending_block::<Identity>(), 40);
+				Vesting::vested_transfer(Some(3).into(), 2, sched1).unwrap();
 				assert_eq!(Vesting::vesting(&2).unwrap().len(), 2);
-				assert_eq!(Vesting::vesting(&2).unwrap()[1], sched_1);
+				assert_eq!(Vesting::vesting(&2).unwrap()[1], sched1);
 
-				let all_scheds_end = sched_0.ending_block::<Identity>()
-					.max(sched_1.ending_block::<Identity>());
+				let all_scheds_end =
+					sched0.ending_block::<Identity>().max(sched1.ending_block::<Identity>());
 				assert_eq!(all_scheds_end, 40);
 				System::set_block_number(all_scheds_end);
 				// Prior to merge_schedules and with no vest/vest_other called the user has no usable
 				// balance.
 				assert_eq!(Balances::usable_balance(&2), 0);
 				Vesting::merge_schedules(Some(2).into(), 0, 1).unwrap();
-				// The user no longer has any more vesting schedules
+				// The user no longer has any more vesting schedules because they both ended at the
+				// block they where merged
 				assert_eq!(Vesting::vesting(&2), None);
 
-				let sched_0_vested_now = sched_0.per_block()
-					* (sched_0.ending_block::<Identity>() - sched_0.starting_block());
-				let sched_1_vested_now = sched_1.per_block()
-					* (sched_1.ending_block::<Identity>() - sched_1.starting_block());
-				assert_eq!(Balances::usable_balance(&2), sched_0_vested_now + sched_1_vested_now);
+				let sched0_vested_now = sched0.per_block() *
+					(sched0.ending_block::<Identity>() - sched0.starting_block());
+				let sched1_vested_now = sched1.per_block() *
+					(sched1.ending_block::<Identity>() - sched1.starting_block());
+				assert_eq!(Balances::usable_balance(&2), sched0_vested_now + sched1_vested_now);
 			});
 	}
 
-
 	#[test]
 	fn merge_schedules_throws_proper_errors() {
-		// Schedule index out of bounds
-		ExtBuilder::default()
-			.existential_deposit(256)
-			.build()
-			.execute_with(|| {
-				let max_schedules = <Test as Config>::MaxVestingSchedules::get();
-				// Account 2 should already have a vesting schedule.
-				let sched_0 =  VestingInfo::try_new::<Test>(
-					256 * 20,
-					256, // Vesting over 20 blocks
-					10,
-				).unwrap();
+		ExtBuilder::default().existential_deposit(256).build().execute_with(|| {
+			// Account 2 should already have a vesting schedule.
+			let sched0 = VestingInfo::try_new::<Test>(256 * 20, 256, 10).unwrap();
 
-				// Not enough vesting schedules
-				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
-				assert_noop!(
+			// Not enough vesting schedules
+			assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
+			assert_noop!(
 					Vesting::merge_schedules(Some(2).into(), 0, 1),
 					Error::<Test>::ScheduleIndexOutOfBounds
 				);
 
-				// Enough schedules to merge but an index is non-existent
-				Vesting::vested_transfer(Some(3).into(), 2, sched_0).unwrap();
-				assert_eq!(Vesting::vesting(&2).unwrap().len(), 2);
-				assert_noop!(
-					Vesting::merge_schedules(Some(2).into(), 0, 2),
-					Error::<Test>::ScheduleIndexOutOfBounds
-				);
+			// Enough schedules to merge but an index is non-existent
+			Vesting::vested_transfer(Some(3).into(), 2, sched0).unwrap();
+			assert_eq!(Vesting::vesting(&2).unwrap(), vec![sched0, sched0]);
+			assert_noop!(
+				Vesting::merge_schedules(Some(2).into(), 0, 2),
+				Error::<Test>::ScheduleIndexOutOfBounds
+			);
 
-				// Index >= max allowed schedules
-				Vesting::vested_transfer(Some(4).into(), 2, sched_0).unwrap();
-				assert_eq!(Vesting::vesting(&2).unwrap().len(), max_schedules as usize);
-				assert_noop!(
-					Vesting::merge_schedules(Some(2).into(), 0, max_schedules),
-					Error::<Test>::ScheduleIndexOutOfBounds
-				);
+			// Index >= max allowed schedules
+			let max_schedules = <Test as Config>::MaxVestingSchedules::get();
+			Vesting::vested_transfer(Some(4).into(), 2, sched0).unwrap();
+			assert_eq!(Vesting::vesting(&2).unwrap().len(), max_schedules as usize);
+			assert_noop!(
+				Vesting::merge_schedules(Some(2).into(), 0, max_schedules),
+				Error::<Test>::ScheduleIndexOutOfBounds
+			);
 
-				// Noop with no errors if indexes are the same
-				let cur_scheds = Vesting::vesting(&2);
-				assert_ok!(Vesting::merge_schedules(Some(2).into(), 0, 0)); // TODO better way to assert noop?
-				assert_eq!(Vesting::vesting(&2), cur_scheds)
-
-
-			});
+			// Essentially a noop with no errors if indexes are the same
+			let cur_scheds = Vesting::vesting(&2);
+			assert_ok!(Vesting::merge_schedules(Some(2).into(), 0, 0));
+			assert_eq!(Vesting::vesting(&2), cur_scheds)
+		});
 	}
 
 	#[test]
@@ -1607,32 +1610,28 @@ mod tests {
 			});
 	}
 
-
 	#[test]
 	fn vesting_info_validation_works() {
 		let min_transfer = <Test as Config>::MinVestedTransfer::get();
 		// `locked` cannot be less than min_transfer (non 0 case)
-		match  VestingInfo::try_new::<Test>(min_transfer - 1,	1u64, 10u64) {
+		match VestingInfo::try_new::<Test>(min_transfer - 1, 1u64, 10u64) {
 			Err(Error::<Test>::AmountLow) => (),
-			_ => panic!()
+			_ => panic!(),
 		}
 		// `locked` cannot be 0
-		match  VestingInfo::try_new::<Test>(0,	1u64, 10u64) {
+		match VestingInfo::try_new::<Test>(0, 1u64, 10u64) {
 			Err(Error::<Test>::InvalidScheduleParams) => (),
-			_ => panic!()
+			_ => panic!(),
 		}
 		// `per_block` cannot be 0
-		match  VestingInfo::try_new::<Test>(min_transfer + 1,	0u64, 10u64) {
+		match VestingInfo::try_new::<Test>(min_transfer + 1, 0u64, 10u64) {
 			Err(Error::<Test>::InvalidScheduleParams) => (),
-			_ => panic!()
+			_ => panic!(),
 		}
 		// Valid inputs
-		let ok_sched = VestingInfo::try_new::<Test>(min_transfer,	1u64, 10u64);
+		let ok_sched = VestingInfo::try_new::<Test>(min_transfer, 1u64, 10u64);
 		assert!(ok_sched.is_ok());
-		assert_eq!(
-			ok_sched.unwrap(),
-			VestingInfo::unsafe_new(min_transfer, 1u64, 10u64)
-		);
+		assert_eq!(ok_sched.unwrap(), VestingInfo::unsafe_new(min_transfer, 1u64, 10u64));
 		// `per_block` is never bigger than `locked`
 		assert_eq!(
 			VestingInfo::try_new::<Test>(256u64, 256 * 2u64, 10u64).unwrap(),
@@ -1650,15 +1649,16 @@ mod tests {
 	fn vesting_info_ending_block_works() {
 		// Treats `per_block` 0 as a `per_block` of 1
 		let per_block_0 = VestingInfo::unsafe_new(256u32, 0u32, 10u32);
-		let per_block_1 = VestingInfo::try_new::<Test>(256u32, 1u32, 10u32)
-			.unwrap();
-		assert_eq!(per_block_0.ending_block::<Identity>(), per_block_0.locked() + per_block_0.starting_block());
+		let per_block_1 = VestingInfo::try_new::<Test>(256u32, 1u32, 10u32).unwrap();
+		assert_eq!(
+			per_block_0.ending_block::<Identity>(),
+			per_block_0.locked() + per_block_0.starting_block()
+		);
 		assert_eq!(per_block_0.ending_block::<Identity>(), per_block_1.ending_block::<Identity>());
 
 		// `per_block >= locked` always results in a schedule ending the block after it starts
 		let per_block_gt_locked = VestingInfo::unsafe_new(256u32, 256 * 2u32, 10u32);
-		let per_block_eq_locked =  VestingInfo::try_new::<Test>(256u32, 256u32, 10u32)
-			.unwrap();
+		let per_block_eq_locked = VestingInfo::try_new::<Test>(256u32, 256u32, 10u32).unwrap();
 		assert_eq!(
 			per_block_gt_locked.ending_block::<Identity>(),
 			1 + per_block_gt_locked.starting_block()
@@ -1675,22 +1675,9 @@ mod tests {
 			imperfect_per_block.starting_block() + 2u32,
 		);
 		assert_eq!(
-			imperfect_per_block.locked_at::<Identity>(imperfect_per_block.ending_block::<Identity>()),
+			imperfect_per_block
+				.locked_at::<Identity>(imperfect_per_block.ending_block::<Identity>()),
 			0
 		);
 	}
-
-	#[test]
-	fn schedule_with_zero_duration() {
-		// per_block > locked
-
-		// merge where both schedules start and end on same block in the future
-	}
-
-	#[test]
-	fn vest_info_ending_block_works() {
-
-	}
-
-	// TODO AmountLow
 }
