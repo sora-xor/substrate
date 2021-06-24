@@ -81,16 +81,15 @@ mod vesting_info {
 		starting_block: BlockNumber,
 	}
 
-	impl<
-		Balance: AtLeast32BitUnsigned + Copy,
-		BlockNumber: AtLeast32BitUnsigned + Copy
-	> VestingInfo<Balance, BlockNumber> {
+	impl<Balance: AtLeast32BitUnsigned + Copy, BlockNumber: AtLeast32BitUnsigned + Copy>
+		VestingInfo<Balance, BlockNumber>
+	{
 		/// Instantiate a new `VestingInfo` and validate parameters
 		pub fn try_new<T: Config>(
 			locked: Balance,
 			per_block: Balance,
-			starting_block: BlockNumber
-		) -> Result<VestingInfo<Balance, BlockNumber>, Error::<T>> {
+			starting_block: BlockNumber,
+		) -> Result<VestingInfo<Balance, BlockNumber>, Error<T>> {
 			Self::validate_params(locked, per_block, starting_block)?;
 			let per_block = if per_block > locked { locked } else { per_block };
 			Ok(VestingInfo { locked, per_block, starting_block })
@@ -100,7 +99,7 @@ mod vesting_info {
 		pub fn validate_params<T: Config>(
 			locked: Balance,
 			per_block: Balance,
-			_starting_block: BlockNumber
+			_starting_block: BlockNumber,
 		) -> Result<(), Error<T>> {
 			ensure!(!locked.is_zero() && !per_block.is_zero(), Error::<T>::InvalidScheduleParams);
 			let min_transfer: u32 = T::MinVestedTransfer::get().try_into().unwrap_or(u32::MAX);
@@ -137,9 +136,10 @@ mod vesting_info {
 		}
 
 		/// Amount locked at block `n`.
-		pub fn locked_at<
-			BlockNumberToBalance: Convert<BlockNumber, Balance>
-		>(&self, n: BlockNumber) -> Balance {
+		pub fn locked_at<BlockNumberToBalance: Convert<BlockNumber, Balance>>(
+			&self,
+			n: BlockNumber,
+		) -> Balance {
 			// Number of blocks that count toward vesting
 			// Saturating to 0 when n < starting_block
 			let vested_block_count = n.saturating_sub(self.starting_block);
@@ -154,9 +154,7 @@ mod vesting_info {
 		}
 
 		/// Block number at which the schedule ends
-		pub fn ending_block<
-			BlockNumberToBalance: Convert<BlockNumber, Balance>
-		>(&self) -> Balance {
+		pub fn ending_block<BlockNumberToBalance: Convert<BlockNumber, Balance>>(&self) -> Balance {
 			let starting_block = BlockNumberToBalance::convert(self.starting_block);
 			let duration = if self.per_block > self.locked {
 				// If `per_block` is bigger than `locked`, the schedule will end
@@ -169,13 +167,16 @@ mod vesting_info {
 			} else {
 				let has_remainder = !(self.locked % self.per_block).is_zero();
 				let maybe_duration = self.locked / self.per_block;
-				if has_remainder { maybe_duration + 1u32.into() } else { maybe_duration }
+				if has_remainder {
+					maybe_duration + 1u32.into()
+				} else {
+					maybe_duration
+				}
 			};
 			starting_block.saturating_add(duration)
 		}
 	}
 }
-
 
 #[frame_support::pallet]
 pub mod pallet {
@@ -412,7 +413,7 @@ pub mod pallet {
 		/// the maximum of the original two schedules duration.
 		///
 		/// NOTE: this will vest all schedules through the current block prior to merging. However,
-		/// the schedule indexes are based off of the ordering prior to schedules being vested.
+		/// the schedule indexes are based off of the ordering prior to schedules being vested/filtered.
 		///
 		/// NOTE: If `schedule1_index == schedule2_index` this is a no-op.
 		///
@@ -431,9 +432,11 @@ pub mod pallet {
 		pub fn merge_schedules(
 			origin: OriginFor<T>,
 			schedule1_index: u32,
-			schedule2_index: u32
+			schedule2_index: u32,
 		) -> DispatchResult {
-			if schedule1_index == schedule2_index { return Ok(()) };
+			if schedule1_index == schedule2_index {
+				return Ok(());
+			};
 			let who = ensure_signed(origin)?;
 			let schedule1_index = schedule1_index as usize;
 			let schedule2_index = schedule2_index as usize;
@@ -499,12 +502,16 @@ impl<T: Config> Pallet<T> {
 		let starting_block = now
 			.max(schedule1.starting_block())
 			.max(schedule2.starting_block());
-		let duration = ending_block
-			.saturating_sub(T::BlockNumberToBalance::convert(starting_block));
-		// TODO make sure to try and get to each of these in test cases
+		let duration =
+			ending_block.saturating_sub(T::BlockNumberToBalance::convert(starting_block));
 		let per_block = if duration.is_zero() {
+			// The logic of `ending_block` guarantees that each schedule ends at least a block
+			// after it starts and since we take the max starting and ending_block we should never get here
 			locked
 		} else if duration > locked {
+			// This would mean we have a per_block of less than 1, which should not be not possible
+			// because when we merge the new schedule is at most the same duration as the longest, but
+			// never greater
 			1u32.into()
 		} else {
 			locked.checked_div(&duration)?
@@ -1104,8 +1111,7 @@ mod tests {
 					256, // Vesting over 20 blocks
 					10,
 				).unwrap();
-				assert_eq!(Vesting::vesting(&2).unwrap()[0], user2_vesting_schedule);
-				assert_eq!(Vesting::vesting(&2).unwrap().len(), 1);
+				assert_eq!(Vesting::vesting(&2).unwrap(), vec![user2_vesting_schedule]);
 
 				let new_vesting_schedule = VestingInfo::try_new::<Test>(
 					256 * 5,
@@ -1432,6 +1438,36 @@ mod tests {
 	}
 
 	#[test]
+	fn merge_vesting_info_handles_per_block_0() {
+		// Faulty schedules with an infinite duration (per_block == 0) can be merged to create
+		// a schedule that vest 1 per_block (helpful for faulty legacy schedules)
+		let existential_deposit = 256;
+		ExtBuilder::default()
+			.existential_deposit(existential_deposit)
+			.build()
+			.execute_with(|| {
+				// Merge a two schedules both with a duration greater than there
+				// locked amount
+				let sched0 = VestingInfo::unsafe_new(existential_deposit, 0, 1);
+				let sched1 = VestingInfo::unsafe_new(existential_deposit * 2, 0, 10);
+
+				let cur_block = 5;
+				let merged_locked = sched0.locked_at::<Identity>(cur_block) +
+					sched1.locked_at::<Identity>(cur_block);
+				let merged_sched = VestingInfo::try_new::<Test>(
+					merged_locked,
+					1, // Merged schedule will have a per_block of 1
+					10,
+				)
+				.unwrap();
+				assert_eq!(
+					merged_sched,
+					Vesting::merge_vesting_info(cur_block, sched0, sched1).unwrap()
+				);
+			});
+	}
+
+	#[test]
 	fn merge_finishing_and_ongoing_schedule() {
 		// If a schedule finishes by the block we treat the ongoing schedule as the merged one
 		let existential_deposit = 256;
@@ -1648,12 +1684,6 @@ mod tests {
 	}
 
 	#[test]
-	fn merge_vesting_info_handles_duration_edge_cases() {
-		// let x = Vesting::merge_vesting_info(now, schedule1, schedule2);
-		// assert_eq!(x, y)
-	}
-
-	#[test]
 	fn vesting_info_ending_block_works() {
 		// Treats `per_block` 0 as a `per_block` of 1
 		let per_block_0 = VestingInfo::unsafe_new(256u32, 0u32, 10u32);
@@ -1693,6 +1723,4 @@ mod tests {
 	fn vesting_balance_accounts_for_all_schedules() {
 		// TODO
 	}
-
-
 }
