@@ -525,24 +525,38 @@ impl<T: Config> Pallet<T> {
 	fn do_vested_transfer(
 		source: <T::Lookup as StaticLookup>::Source,
 		target: <T::Lookup as StaticLookup>::Source,
-		schedule: VestingInfo<BalanceOf<T>, T::BlockNumber>
+		schedule: VestingInfo<BalanceOf<T>, T::BlockNumber>,
 	) -> DispatchResult {
 		VestingInfo::validate_params::<T>(
-			schedule.locked(), schedule.per_block(), schedule.starting_block()
+			schedule.locked(),
+			schedule.per_block(),
+			schedule.starting_block(),
 		)?;
 
 		let target = T::Lookup::lookup(target)?;
 		let source = T::Lookup::lookup(source)?;
 		if let Some(len) = Vesting::<T>::decode_len(&target) {
-			ensure!(len < T::MaxVestingSchedules::get() as usize, Error::<T>::AtMaxVestingSchedules);
+			ensure!(
+				len < T::MaxVestingSchedules::get() as usize,
+				Error::<T>::AtMaxVestingSchedules
+			);
 		}
 
-		T::Currency::transfer(&source, &target, schedule.locked(), ExistenceRequirement::AllowDeath)?;
+		T::Currency::transfer(
+			&source,
+			&target,
+			schedule.locked(),
+			ExistenceRequirement::AllowDeath,
+		)?;
 
 		// We can't let this fail because the currency transfer has already happened
 		Self::add_vesting_schedule(
-			&target, schedule.locked(), schedule.per_block(), schedule.starting_block()
-		).expect("schedule inputs and vec bounds validated. q.e.");
+			&target,
+			schedule.locked(),
+			schedule.per_block(),
+			schedule.starting_block(),
+		)
+		.expect("schedule inputs and vec bounds validated. q.e.");
 
 		Ok(())
 	}
@@ -1013,6 +1027,7 @@ mod tests {
 				let user4_free_balance = Balances::free_balance(&4);
 				assert_eq!(user2_free_balance, 256 * 20);
 				assert_eq!(user4_free_balance, 256 * 40);
+
 				// Account 2 should already have a vesting schedule.
 				let user2_vesting_schedule = VestingInfo::try_new::<Test>(
 					256 * 20,
@@ -1041,7 +1056,29 @@ mod tests {
 					Error::<Test>::AmountLow,
 				);
 
-				// Verify no currency transfer happened.
+				// `per_block` is 0
+				let schedule_per_block_0 = VestingInfo::unsafe_new(
+					256,
+					0,
+					10,
+				);
+				assert_noop!(
+					Vesting::force_vested_transfer(RawOrigin::Root.into(), 3, 4, schedule_per_block_0),
+					Error::<Test>::InvalidScheduleParams,
+				);
+
+				// `locked` is 0
+				let schedule_locked_0 = VestingInfo::unsafe_new(
+					0,
+					1,
+					10,
+				);
+				assert_noop!(
+					Vesting::force_vested_transfer(RawOrigin::Root.into(), 3, 4, schedule_locked_0),
+					Error::<Test>::InvalidScheduleParams,
+				);
+
+				assert_eq!(user2_free_balance, Balances::free_balance(&2));
 				assert_eq!(user2_free_balance, 256 * 20);
 				assert_eq!(user4_free_balance, 256 * 40);
 			});
@@ -1129,7 +1166,7 @@ mod tests {
 					Error::<Test>::AtMaxVestingSchedules,
 				);
 
-				// Fails due to too low transfer amount.
+				// Too low transfer amount.
 				let new_vesting_schedule_too_low = VestingInfo::unsafe_new(
 					<Test as Config>::MinVestedTransfer::get() - 1,
 					64,
@@ -1138,6 +1175,28 @@ mod tests {
 				assert_noop!(
 					Vesting::force_vested_transfer(RawOrigin::Root.into(), 3, 4, new_vesting_schedule_too_low),
 					Error::<Test>::AmountLow,
+				);
+
+				// `per_block` is 0
+				let schedule_per_block_0 = VestingInfo::unsafe_new(
+					256,
+					0,
+					10,
+				);
+				assert_noop!(
+					Vesting::force_vested_transfer(RawOrigin::Root.into(), 3, 4, schedule_per_block_0),
+					Error::<Test>::InvalidScheduleParams,
+				);
+
+				// `locked` is 0
+				let schedule_locked_0 = VestingInfo::unsafe_new(
+					0,
+					1,
+					10,
+				);
+				assert_noop!(
+					Vesting::force_vested_transfer(RawOrigin::Root.into(), 3, 4, schedule_locked_0),
+					Error::<Test>::InvalidScheduleParams,
 				);
 
 				// Verify no currency transfer happened.
