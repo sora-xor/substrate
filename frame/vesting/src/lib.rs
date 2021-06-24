@@ -1036,15 +1036,6 @@ mod tests {
 				).unwrap();
 				assert_eq!(Vesting::vesting(&2).unwrap(), vec![user2_vesting_schedule]);
 
-				for _ in 0..<Test as Config>::MaxVestingSchedules::get() - 1 {
-					assert_ok!(Vesting::vested_transfer(Some(4).into(), 2, user2_vesting_schedule));
-				}
-				// Try to insert a 4th vesting schedule when `MaxVestingSchedules` === 3
-				assert_noop!(
-					Vesting::vested_transfer(Some(4).into(), 2, user2_vesting_schedule),
-					Error::<Test>::AtMaxVestingSchedules,
-				);
-
 				// Fails due to too low transfer amount.
 				let new_vesting_schedule_too_low = VestingInfo::unsafe_new(
 					<Test as Config>::MinVestedTransfer::get() - 1,
@@ -1078,131 +1069,152 @@ mod tests {
 					Error::<Test>::InvalidScheduleParams,
 				);
 
+				// Free balance has not changed
 				assert_eq!(user2_free_balance, Balances::free_balance(&2));
-				assert_eq!(user2_free_balance, 256 * 20);
-				assert_eq!(user4_free_balance, 256 * 40);
+				assert_eq!(user4_free_balance, Balances::free_balance(&4));
+
+
+				// Add the max allowed schedules to 4
+				for _ in 0..<Test as Config>::MaxVestingSchedules::get() - 1 {
+					assert_ok!(Vesting::vested_transfer(Some(4).into(), 2, user2_vesting_schedule));
+				}
+				// Get the updated free balance
+				let user4_free_balance = Balances::free_balance(&4);
+				// Try to insert a 4th vesting schedule when `MaxVestingSchedules` === 3
+				assert_noop!(
+					Vesting::vested_transfer(Some(4).into(), 2, user2_vesting_schedule),
+					Error::<Test>::AtMaxVestingSchedules,
+				);
+				// Free balance did not change after the erroneous call
+				assert_eq!(user4_free_balance, Balances::free_balance(&4));
 			});
 	}
 
 	#[test]
 	fn force_vested_transfer_works() {
-		ExtBuilder::default()
-			.existential_deposit(256)
-			.build()
-			.execute_with(|| {
-				let user3_free_balance = Balances::free_balance(&3);
-				let user4_free_balance = Balances::free_balance(&4);
-				assert_eq!(user3_free_balance, 256 * 30);
-				assert_eq!(user4_free_balance, 256 * 40);
-				// Account 4 should not have any vesting yet.
-				assert_eq!(Vesting::vesting(&4), None);
-				// Make the schedule for the new transfer.
-				let new_vesting_schedule = VestingInfo::try_new::<Test>(
-					256 * 5,
-					64, // Vesting over 20 blocks
-					10,
-				).unwrap();
-				assert_noop!(Vesting::force_vested_transfer(Some(4).into(), 3, 4, new_vesting_schedule), BadOrigin);
-				assert_ok!(Vesting::force_vested_transfer(RawOrigin::Root.into(), 3, 4, new_vesting_schedule));
-				// Now account 4 should have vesting.
-				assert_eq!(Vesting::vesting(&4).unwrap()[0], new_vesting_schedule);
-				assert_eq!(Vesting::vesting(&4).unwrap().len(), 1);
-				// Ensure the transfer happened correctly.
-				let user3_free_balance_updated = Balances::free_balance(&3);
-				assert_eq!(user3_free_balance_updated, 256 * 25);
-				let user4_free_balance_updated = Balances::free_balance(&4);
-				assert_eq!(user4_free_balance_updated, 256 * 45);
-				// Account 4 has 5 * 256 locked.
-				assert_eq!(Vesting::vesting_balance(&4), Some(256 * 5));
+		ExtBuilder::default().existential_deposit(256).build().execute_with(|| {
+			let user3_free_balance = Balances::free_balance(&3);
+			let user4_free_balance = Balances::free_balance(&4);
+			assert_eq!(user3_free_balance, 256 * 30);
+			assert_eq!(user4_free_balance, 256 * 40);
+			// Account 4 should not have any vesting yet.
+			assert_eq!(Vesting::vesting(&4), None);
+			// Make the schedule for the new transfer.
+			let new_vesting_schedule = VestingInfo::try_new::<Test>(
+				256 * 5,
+				64, // Vesting over 20 blocks
+				10,
+			)
+			.unwrap();
+			assert_noop!(
+				Vesting::force_vested_transfer(Some(4).into(), 3, 4, new_vesting_schedule),
+				BadOrigin
+			);
+			assert_ok!(Vesting::force_vested_transfer(
+				RawOrigin::Root.into(),
+				3,
+				4,
+				new_vesting_schedule
+			));
+			// Now account 4 should have vesting.
+			assert_eq!(Vesting::vesting(&4).unwrap()[0], new_vesting_schedule);
+			assert_eq!(Vesting::vesting(&4).unwrap().len(), 1);
+			// Ensure the transfer happened correctly.
+			let user3_free_balance_updated = Balances::free_balance(&3);
+			assert_eq!(user3_free_balance_updated, 256 * 25);
+			let user4_free_balance_updated = Balances::free_balance(&4);
+			assert_eq!(user4_free_balance_updated, 256 * 45);
+			// Account 4 has 5 * 256 locked.
+			assert_eq!(Vesting::vesting_balance(&4), Some(256 * 5));
 
-				System::set_block_number(20);
-				assert_eq!(System::block_number(), 20);
+			System::set_block_number(20);
+			assert_eq!(System::block_number(), 20);
 
-				// Account 4 has 5 * 64 units vested by block 20.
-				assert_eq!(Vesting::vesting_balance(&4), Some(10 * 64));
+			// Account 4 has 5 * 64 units vested by block 20.
+			assert_eq!(Vesting::vesting_balance(&4), Some(10 * 64));
 
-				System::set_block_number(30);
-				assert_eq!(System::block_number(), 30);
+			System::set_block_number(30);
+			assert_eq!(System::block_number(), 30);
 
-				// Account 4 has fully vested.
-				assert_eq!(Vesting::vesting_balance(&4), Some(0));
+			// Account 4 has fully vested.
+			assert_eq!(Vesting::vesting_balance(&4), Some(0));
 
-
-				// TODO multiple vested transfers work
-			});
+			// TODO multiple vested transfers work
+		});
 	}
 
 	#[test]
 	fn force_vested_transfer_correctly_fails() {
-		ExtBuilder::default()
-			.existential_deposit(256)
-			.build()
-			.execute_with(|| {
-				let user2_free_balance = Balances::free_balance(&2);
-				let user4_free_balance = Balances::free_balance(&4);
-				assert_eq!(user2_free_balance, 256 * 20);
-				assert_eq!(user4_free_balance, 256 * 40);
-				// Account 2 should already have a vesting schedule.
-				let user2_vesting_schedule = VestingInfo::try_new::<Test>(
-					256 * 20,
-					256, // Vesting over 20 blocks
-					10,
-				).unwrap();
-				assert_eq!(Vesting::vesting(&2).unwrap(), vec![user2_vesting_schedule]);
+		ExtBuilder::default().existential_deposit(256).build().execute_with(|| {
+			let user2_free_balance = Balances::free_balance(&2);
+			let user4_free_balance = Balances::free_balance(&4);
+			assert_eq!(user2_free_balance, 256 * 20);
+			assert_eq!(user4_free_balance, 256 * 40);
+			// Account 2 should already have a vesting schedule.
+			let user2_vesting_schedule = VestingInfo::try_new::<Test>(
+				256 * 20,
+				256, // Vesting over 20 blocks
+				10,
+			)
+			.unwrap();
+			assert_eq!(Vesting::vesting(&2).unwrap(), vec![user2_vesting_schedule]);
 
-				let new_vesting_schedule = VestingInfo::try_new::<Test>(
-					256 * 5,
-					64, // Vesting over 20 blocks
-					10,
-				).unwrap();
+			let new_vesting_schedule = VestingInfo::try_new::<Test>(
+				256 * 5,
+				64, // Vesting over 20 blocks
+				10,
+			)
+			.unwrap();
 
-				for _ in 0..<Test as Config>::MaxVestingSchedules::get() - 1 {
-					assert_ok!(
-						Vesting::force_vested_transfer(RawOrigin::Root.into(), 4, 2, new_vesting_schedule)
-					);
-				}
-				assert_noop!(
-					Vesting::force_vested_transfer(RawOrigin::Root.into(), 4, 2, new_vesting_schedule),
-					Error::<Test>::AtMaxVestingSchedules,
-				);
+			// Too low transfer amount.
+			let new_vesting_schedule_too_low =
+				VestingInfo::unsafe_new(<Test as Config>::MinVestedTransfer::get() - 1, 64, 10);
+			assert_noop!(
+				Vesting::force_vested_transfer(
+					RawOrigin::Root.into(),
+					3,
+					4,
+					new_vesting_schedule_too_low
+				),
+				Error::<Test>::AmountLow,
+			);
 
-				// Too low transfer amount.
-				let new_vesting_schedule_too_low = VestingInfo::unsafe_new(
-					<Test as Config>::MinVestedTransfer::get() - 1,
-					64,
-					10,
-				);
-				assert_noop!(
-					Vesting::force_vested_transfer(RawOrigin::Root.into(), 3, 4, new_vesting_schedule_too_low),
-					Error::<Test>::AmountLow,
-				);
+			// `per_block` is 0
+			let schedule_per_block_0 = VestingInfo::unsafe_new(256, 0, 10);
+			assert_noop!(
+				Vesting::force_vested_transfer(RawOrigin::Root.into(), 3, 4, schedule_per_block_0),
+				Error::<Test>::InvalidScheduleParams,
+			);
 
-				// `per_block` is 0
-				let schedule_per_block_0 = VestingInfo::unsafe_new(
-					256,
-					0,
-					10,
-				);
-				assert_noop!(
-					Vesting::force_vested_transfer(RawOrigin::Root.into(), 3, 4, schedule_per_block_0),
-					Error::<Test>::InvalidScheduleParams,
-				);
+			// `locked` is 0
+			let schedule_locked_0 = VestingInfo::unsafe_new(0, 1, 10);
+			assert_noop!(
+				Vesting::force_vested_transfer(RawOrigin::Root.into(), 3, 4, schedule_locked_0),
+				Error::<Test>::InvalidScheduleParams,
+			);
 
-				// `locked` is 0
-				let schedule_locked_0 = VestingInfo::unsafe_new(
-					0,
-					1,
-					10,
-				);
-				assert_noop!(
-					Vesting::force_vested_transfer(RawOrigin::Root.into(), 3, 4, schedule_locked_0),
-					Error::<Test>::InvalidScheduleParams,
-				);
+			// Verify no currency transfer happened.
+			assert_eq!(user2_free_balance, Balances::free_balance(&2));
+			assert_eq!(user4_free_balance, Balances::free_balance(&4));
 
-				// Verify no currency transfer happened.
-				assert_eq!(user2_free_balance, 256 * 20);
-				assert_eq!(user4_free_balance, 256 * 40);
-			});
+			for _ in 0 .. <Test as Config>::MaxVestingSchedules::get() - 1 {
+				assert_ok!(Vesting::force_vested_transfer(
+					RawOrigin::Root.into(),
+					4,
+					2,
+					new_vesting_schedule
+				));
+			}
+			// Get the updated free balance.
+			let user4_free_balance = Balances::free_balance(&4);
+			// Try to insert a 4th vesting schedule when `MaxVestingSchedules` === 3.
+			assert_noop!(
+				Vesting::vested_transfer(Some(4).into(), 2, user2_vesting_schedule),
+				Error::<Test>::AtMaxVestingSchedules,
+			);
+			// Free balance did not change after the erroneous call.
+			assert_eq!(user4_free_balance, Balances::free_balance(&4));
+		});
 	}
 
 	#[test]
@@ -1219,10 +1231,7 @@ mod tests {
 
 				assert_eq!(Vesting::vesting(&3), None);
 				for _ in 0 .. <Test as Config>::MaxVestingSchedules::get() {
-					assert_eq!(
-						Vesting::vested_transfer(Some(4).into(), 3, new_vesting_schedule),
-						Ok(())
-					);
+					assert_ok!(Vesting::vested_transfer(Some(4).into(), 3, new_vesting_schedule));
 				}
 				assert_noop!(
 					Vesting::vested_transfer(Some(4).into(), 3, new_vesting_schedule),
@@ -1241,14 +1250,13 @@ mod tests {
 
 				assert_eq!(Vesting::vesting(&3), None);
 				for _ in 0 .. <Test as Config>::MaxVestingSchedules::get() {
-					assert_eq!(
+					assert_ok!(
 						Vesting::force_vested_transfer(
 							RawOrigin::Root.into(),
 							4,
 							3,
 							new_vesting_schedule
-						),
-						Ok(())
+						)
 					);
 				}
 				assert_noop!(
