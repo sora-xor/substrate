@@ -876,7 +876,6 @@ mod tests {
 
 	#[test]
 	fn check_vesting_status_for_multi_schedule_account() {
-		// TODO
 		let existential_deposit = 256;
 		ExtBuilder::default()
 			.existential_deposit(existential_deposit)
@@ -960,7 +959,7 @@ mod tests {
 					)
 				);
 
-				// Fully vested now that sche2 has finished
+				// Fully vested now that sched2 has finished
 				System::set_block_number(35);
 				assert_eq!(System::block_number(), 35);
 				assert_eq!(Vesting::vesting_balance(&2), Some(0));
@@ -1165,7 +1164,8 @@ mod tests {
 				assert_eq!(user2_free_balance, Balances::free_balance(&2));
 				assert_eq!(user4_free_balance, Balances::free_balance(&4));
 
-				// Add the max allowed schedules to 4.
+				// Add max amount schedules to user 4, (additionally asserting that vested_transfer
+				// works with multiple schedules).
 				for _ in 0..<Test as Config>::MaxVestingSchedules::get() - 1 {
 					assert_ok!(Vesting::vested_transfer(Some(4).into(), 2, user2_vesting_schedule));
 				}
@@ -1226,8 +1226,6 @@ mod tests {
 
 			// Account 4 has fully vested.
 			assert_eq!(Vesting::vesting_balance(&4), Some(0));
-
-			// TODO multi schedules work
 		});
 	}
 
@@ -1285,6 +1283,8 @@ mod tests {
 			assert_eq!(user2_free_balance, Balances::free_balance(&2));
 			assert_eq!(user4_free_balance, Balances::free_balance(&4));
 
+			// Add max amount schedules to user 4, (additionally asserting that force_vested_transfer
+			// works with multiple schedules).
 			for _ in 0 .. <Test as Config>::MaxVestingSchedules::get() - 1 {
 				assert_ok!(Vesting::force_vested_transfer(
 					RawOrigin::Root.into(),
