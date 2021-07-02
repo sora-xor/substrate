@@ -178,6 +178,12 @@ impl Default for PendingRequests {
 	}
 }
 
+struct GapSync<B: BlockT> {
+	blocks: BlockCollection<B>,
+	best_queued_number: NumberFor<B>,
+	target: NumberFor<B>,
+}
+
 /// The main data structure which contains all the state for a chains
 /// active syncing strategy.
 pub struct ChainSync<B: BlockT> {
@@ -223,6 +229,8 @@ pub struct ChainSync<B: BlockT> {
 	/// Enable importing existing blocks. This is used used after the state download to
 	/// catch up to the latest state while re-importing blocks.
 	import_existing: bool,
+	/// Gap download process.
+	gap_sync: Option<GapSync<B>>,
 }
 
 /// All the data we have about a Peer that we are trying to sync with
@@ -299,6 +307,8 @@ pub enum PeerSyncState<B: BlockT> {
 	DownloadingState,
 	/// Downloading warp proof.
 	DownloadingWarpProof,
+	/// Actively downloading block history after warp sync.
+	DownloadingGap(NumberFor<B>),
 }
 
 impl<B: BlockT> PeerSyncState<B> {
@@ -328,33 +338,36 @@ pub struct StateDownloadProgress {
 
 /// Reported warp sync phase.
 #[derive(Clone, Eq, PartialEq, Debug)]
-pub enum WarpSyncPhase {
+pub enum WarpSyncPhase<B: BlockT> {
 	/// Waiting for peers to connect.
-	AvaitingPeers,
+	AwaitingPeers,
 	/// Downloading and verifying grandpa warp proofs.
 	DownloadingWarpProofs,
 	/// Downloading state data.
 	DownloadingState,
 	/// Importing state.
 	ImportingState,
+	/// Downloading block history.
+	DownloadingBlocks(NumberFor<B>),
 }
 
-impl fmt::Display for WarpSyncPhase {
+impl<B: BlockT> fmt::Display for WarpSyncPhase<B> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
-			WarpSyncPhase::AvaitingPeers => write!(f, "Avaiting peers"),
+			WarpSyncPhase::AwaitingPeers => write!(f, "Waiting for peers"),
 			WarpSyncPhase::DownloadingWarpProofs => write!(f, "Downloading finality proofs"),
 			WarpSyncPhase::DownloadingState => write!(f, "Downloading state"),
 			WarpSyncPhase::ImportingState => write!(f, "Importing state"),
+			WarpSyncPhase::DownloadingBlocks(n) => write!(f, "Downloading block history (#{})", n),
 		}
 	}
 }
 
 /// Reported warp sync progress.
 #[derive(Clone, Eq, PartialEq, Debug)]
-pub struct WarpSyncProgress {
+pub struct WarpSyncProgress<B: BlockT> {
 	/// Estimated download percentage.
-	pub phase: WarpSyncPhase,
+	pub phase: WarpSyncPhase<B>,
 	/// Total bytes downloaded so far.
 	pub total_bytes: u64,
 }
@@ -373,7 +386,7 @@ pub struct Status<B: BlockT> {
 	/// State sync status in progress, if any.
 	pub state_sync: Option<StateDownloadProgress>,
 	/// Warp sync in progress, if any.
-	pub warp_sync: Option<WarpSyncProgress>,
+	pub warp_sync: Option<WarpSyncProgress<B>>,
 }
 
 /// A peer did not behave as expected and should be reported.
@@ -567,6 +580,7 @@ impl<B: BlockT> ChainSync<B> {
 			warp_sync: None,
 			warp_sync_provider,
 			import_existing: false,
+			gap_sync: None,
 		};
 		sync.reset_sync_start_point()?;
 		Ok(sync)
@@ -613,12 +627,16 @@ impl<B: BlockT> ChainSync<B> {
 				SyncState::Idle
 			};
 
-		let warp_sync_progress = match (&self.warp_sync, &self.mode) {
-			(None, SyncMode::Warp) => Some(WarpSyncProgress {
-				phase: WarpSyncPhase::AvaitingPeers,
+		let warp_sync_progress = match (&self.warp_sync, &self.mode, &self.gap_sync) {
+			(_, _, Some(gap_sync)) => Some(WarpSyncProgress {
+				phase: WarpSyncPhase::DownloadingBlocks(gap_sync.best_queued_number),
 				total_bytes: 0
 			}),
-			(Some(sync), _) => Some(sync.progress()),
+			(None, SyncMode::Warp, _) => Some(WarpSyncProgress {
+				phase: WarpSyncPhase::AwaitingPeers,
+				total_bytes: 0
+			}),
+			(Some(sync), _, _) => Some(sync.progress()),
 			_ => None,
 		};
 		Status {
@@ -870,6 +888,7 @@ impl<B: BlockT> ChainSync<B> {
 		let queue = &self.queue_blocks;
 		let pending_requests = self.pending_requests.take();
 		let max_parallel = if major_sync { 1 } else { self.max_parallel_downloads };
+		let gap_sync = &mut self.gap_sync;
 		let iter = self.peers.iter_mut().filter_map(move |(id, peer)| {
 			if !peer.state.is_available() || !pending_requests.contains(id) {
 				return None
@@ -931,6 +950,24 @@ impl<B: BlockT> ChainSync<B> {
 			) {
 				trace!(target: "sync", "Downloading fork {:?} from {}", hash, id);
 				peer.state = PeerSyncState::DownloadingStale(hash);
+				Some((id, req))
+			} else if let Some((range, req)) = gap_sync.as_mut().and_then(|sync| peer_gap_block_request(
+				id,
+				peer,
+				&mut sync.blocks,
+				attrs,
+				sync.target,
+				sync.best_queued_number,
+			)) {
+				peer.state = PeerSyncState::DownloadingGap(range.start);
+				trace!(
+					target: "sync",
+					"New gap block request for {}, (best:{}, common:{}) {:?}",
+					id,
+					peer.best_number,
+					peer.common_number,
+					req,
+				);
 				Some((id, req))
 			} else {
 				None
@@ -1012,6 +1049,7 @@ impl<B: BlockT> ChainSync<B> {
 		response: BlockResponse<B>
 	) -> Result<OnBlockData<B>, BadPeer> {
 		self.downloaded_blocks += response.blocks.len();
+		let mut gap = false;
 		let new_blocks: Vec<IncomingBlock<B>> =
 			if let Some(peer) = self.peers.get_mut(who) {
 				let mut blocks = response.blocks;
@@ -1047,7 +1085,39 @@ impl<B: BlockT> ChainSync<B> {
 										state: None,
 									}
 								}).collect()
-						}
+						},
+						PeerSyncState::DownloadingGap(start_block) => {
+							let start_block = *start_block;
+							peer.state = PeerSyncState::Available;
+							if let Some(gap_sync) = &mut self.gap_sync {
+								gap_sync.blocks.clear_peer_download(who);
+								validate_blocks::<B>(&blocks, who, Some(request))?;
+								gap_sync.blocks.insert(start_block, blocks, who.clone());
+								gap = true;
+								gap_sync.blocks
+									.drain(gap_sync.best_queued_number + One::one())
+									.into_iter()
+									.map(|block_data| {
+										let justifications = block_data.block.justifications.or(
+											legacy_justification_mapping(block_data.block.justification)
+										);
+										IncomingBlock {
+											hash: block_data.block.hash,
+											header: block_data.block.header,
+											body: block_data.block.body,
+											justifications,
+											origin: block_data.origin,
+											allow_missing_state: true,
+											import_existing: self.import_existing,
+											skip_execution: true,
+											state: None,
+										}
+									}).collect()
+							} else {
+								debug!(target: "sync", "Unexpected gap block response from {}", who);
+								return Err(BadPeer(who.clone(), rep::NO_BLOCK));
+							}
+						},
 						PeerSyncState::DownloadingStale(_) => {
 							peer.state = PeerSyncState::Available;
 							if blocks.is_empty() {
@@ -1193,7 +1263,7 @@ impl<B: BlockT> ChainSync<B> {
 				return Err(BadPeer(who.clone(), rep::NOT_REQUESTED));
 			};
 
-		Ok(self.validate_and_queue_blocks(new_blocks))
+		Ok(self.validate_and_queue_blocks(new_blocks, gap))
 	}
 
 	/// Handle a response from the remote to a state request that we made.
@@ -1241,7 +1311,7 @@ impl<B: BlockT> ChainSync<B> {
 					skip_execution: self.skip_execution(),
 					state: Some(state),
 				};
-				debug!(target: "sync", "State sync is complete. Import is queued");
+				debug!(target: "sync", "State download is complete. Import is queued");
 				Ok(OnStateData::Import(origin, block))
 			}
 			state::ImportResult::Continue(request) => {
@@ -1292,6 +1362,7 @@ impl<B: BlockT> ChainSync<B> {
 	fn validate_and_queue_blocks(
 		&mut self,
 		mut new_blocks: Vec<IncomingBlock<B>>,
+		gap: bool
 	) -> OnBlockData<B> {
 		let orig_len = new_blocks.len();
 		new_blocks.retain(|b| !self.queue_blocks.contains(&b.hash));
@@ -1299,7 +1370,7 @@ impl<B: BlockT> ChainSync<B> {
 			debug!(target: "sync", "Ignoring {} blocks that are already queued", orig_len - new_blocks.len());
 		}
 
-		let origin = if self.status().state != SyncState::Downloading {
+		let origin = if !gap && self.status().state != SyncState::Downloading {
 			BlockOrigin::NetworkBroadcast
 		} else {
 			BlockOrigin::NetworkInitialSync
@@ -1462,6 +1533,14 @@ impl<B: BlockT> ChainSync<B> {
 						self.mode = SyncMode::Full;
 						output.extend(self.restart());
 					}
+					let gap_sync_complete = self.gap_sync.as_ref().map_or(false, |s| s.target == number);
+					if gap_sync_complete {
+						info!(
+							target: "sync",
+							"Block history download is complete."
+						);
+						self.gap_sync = None;
+					}
 				},
 				Err(BlockImportError::IncompleteHeader(who)) => {
 					if let Some(peer) = who {
@@ -1572,6 +1651,11 @@ impl<B: BlockT> ChainSync<B> {
 	fn on_block_queued(&mut self, hash: &B::Hash, number: NumberFor<B>) {
 		if self.fork_targets.remove(&hash).is_some() {
 			trace!(target: "sync", "Completed fork sync {:?}", hash);
+		}
+		if let Some(gap_sync) = &mut self.gap_sync {
+			if number > gap_sync.best_queued_number && number <= gap_sync.target {
+				gap_sync.best_queued_number = number;
+			}
 		}
 		if number > self.best_queued_number {
 			self.best_queued_number = number;
@@ -1916,6 +2000,9 @@ impl<B: BlockT> ChainSync<B> {
 	/// import, so this functions checks for such blocks and returns them.
 	pub fn peer_disconnected(&mut self, who: &PeerId) -> Option<OnBlockData<B>> {
 		self.blocks.clear_peer_download(who);
+		if let Some(gap_sync) = &mut self.gap_sync {
+			gap_sync.blocks.clear_peer_download(who)
+		}
 		self.peers.remove(who);
 		self.extra_justifications.peer_disconnected(who);
 		self.pending_requests.set_all();
@@ -1942,7 +2029,7 @@ impl<B: BlockT> ChainSync<B> {
 				}
 			}).collect();
 		if !blocks.is_empty() {
-			Some(self.validate_and_queue_blocks(blocks))
+			Some(self.validate_and_queue_blocks(blocks, false))
 		} else {
 			None
 		}
@@ -2018,6 +2105,14 @@ impl<B: BlockT> ChainSync<B> {
 					self.best_queued_number = Zero::zero();
 				}
 			}
+		}
+		if let Some((start, end)) = info.block_gap {
+			log::debug!(target: "sync", "Starting gap sync #{} - #{}", start, end);
+			self.gap_sync = Some(GapSync {
+				best_queued_number: start - One::one(),
+				target: end,
+				blocks: BlockCollection::new(),
+			});
 		}
 		log::trace!(target: "sync", "Restarted sync at #{} ({:?})", self.best_queued_number, self.best_queued_hash);
 		Ok(())
@@ -2189,6 +2284,39 @@ fn peer_block_request<B: BlockT>(
 		max: Some((range.end - range.start).saturated_into::<u32>())
 	};
 
+	Some((range, request))
+}
+
+/// Get a new block request for the peer if any.
+fn peer_gap_block_request<B: BlockT>(
+	id: &PeerId,
+	peer: &PeerSync<B>,
+	blocks: &mut BlockCollection<B>,
+	attrs: message::BlockAttributes,
+	target: NumberFor<B>,
+	common_number: NumberFor<B>,
+) -> Option<(Range<NumberFor<B>>, BlockRequest<B>)> {
+	let range = blocks.needed_blocks(
+		id.clone(),
+		MAX_BLOCKS_TO_REQUEST,
+		std::cmp::min(peer.best_number, target),
+		common_number,
+		1,
+		MAX_DOWNLOAD_AHEAD,
+	)?;
+
+	// The end is not part of the range.
+	let last = range.end.saturating_sub(One::one());
+	let from = message::FromBlock::Number(last);
+
+	let request = message::generic::BlockRequest {
+		id: 0,
+		fields: attrs.clone(),
+		from,
+		to: None,
+		direction: message::Direction::Descending,
+		max: Some((range.end - range.start).saturated_into::<u32>())
+	};
 	Some((range, request))
 }
 

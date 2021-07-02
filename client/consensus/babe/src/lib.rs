@@ -1524,18 +1524,18 @@ impl<Block, Client, Inner> BlockImport<Block> for BabeBlockImport<Block, Client,
 				// used by pruning may not know about the block that is being
 				// imported.
 				let prune_and_import = || {
+
 					prune_finalized(
 						self.client.clone(),
 						&mut epoch_changes,
 					)?;
-
 					epoch_changes.import(
 						descendent_query(&*self.client),
 						hash,
 						number,
 						*block.header.parent_hash(),
 						next_epoch,
-					).map_err(|e| ConsensusError::ClientImport(format!("{:?}", e)))?;
+					).map_err(|e| ConsensusError::ClientImport(format!("Error importing epoch changes: {:?}", e)))?;
 
 					Ok(())
 				};
@@ -1623,10 +1623,13 @@ fn prune_finalized<Block, Client>(
 	Client: HeaderBackend<Block> + HeaderMetadata<Block, Error = sp_blockchain::Error>,
 {
 	let info = client.info();
+	if info.block_gap.is_none() {
+		epoch_changes.clear_gap();
+	}
 
 	let finalized_slot = {
 		let finalized_header = client.header(BlockId::Hash(info.finalized_hash))
-			.map_err(|e| ConsensusError::ClientImport(format!("{:?}", e)))?
+			.map_err(|e| ConsensusError::ClientImport(format!("Error getting finalized header: {:?}", e)))?
 			.expect("best finalized hash was given by client; \
 				 finalized headers must exist in db; qed");
 
