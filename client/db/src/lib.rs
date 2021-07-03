@@ -1577,6 +1577,12 @@ impl<Block: BlockT> Backend<Block> {
 				if let Some((mut start, end)) = block_gap {
 					if number == start {
 						start += One::one();
+						utils::insert_number_to_key_mapping(
+							&mut transaction,
+							columns::KEY_LOOKUP,
+							number,
+							hash
+						)?;
 					}
 					if start >= end {
 						transaction.remove(columns::META, meta_keys::BLOCK_GAP);
