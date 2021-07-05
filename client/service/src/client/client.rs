@@ -30,7 +30,10 @@ use codec::{Encode, Decode};
 use hash_db::Prefix;
 use sp_core::{
 	convert_hash,
-	storage::{well_known_keys, ChildInfo, PrefixedStorageKey, StorageData, StorageKey},
+	storage::{
+		well_known_keys, ChildInfo, ChildType, PrefixedStorageKey,
+		StorageData, StorageKey, StorageChild,
+	},
 	ChangesTrieConfiguration, ExecutionContext, NativeOrEncoded,
 };
 #[cfg(feature="test-helpers")]
@@ -52,7 +55,8 @@ use sp_state_machine::{
 	DBValue, Backend as StateBackend, ChangesTrieAnchorBlockId,
 	prove_read, prove_child_read, ChangesTrieRootsStorage, ChangesTrieStorage,
 	ChangesTrieConfigurationRange, key_changes, key_changes_proof,
-	prove_range_read_with_size, read_range_proof_check,
+	prove_range_read_with_child_with_size, KeyValueStates, KeyValueStorageLevel,
+	read_range_proof_check_with_child_on_proving_backend, MAX_NESTED_TRIE_DEPTH,
 };
 use sc_executor::RuntimeVersion;
 use sp_consensus::{
@@ -66,7 +70,7 @@ use sp_blockchain::{
 	well_known_cache_keys::Id as CacheKeyId,
 	HeaderMetadata, CachedHeaderMetadata,
 };
-use sp_trie::StorageProof;
+use sp_trie::{StorageProof, CompactProof};
 use sp_api::{
 	CallApiAt, ConstructRuntimeApi, Core as CoreApi, ApiExt, ApiRef, ProvideRuntimeApi,
 	CallApiAtParams,
@@ -802,10 +806,30 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 						Some((main_sc, child_sc))
 					}
 					sp_consensus::StorageChanges::Import(changes) => {
-						let storage = sp_storage::Storage {
-							top: changes.state.into_iter().collect(),
-							children_default: Default::default(),
-						};
+						let mut storage = sp_storage::Storage::default();
+						for state in changes.state.0.into_iter() {
+							if state.parent_storage_keys.len() == 0 && state.state_root.len() == 0 {
+								for (key, value) in state.key_values.into_iter() {
+									storage.top.insert(key, value);
+								}
+							} else {
+								for parent_storage in state.parent_storage_keys {
+									let storage_key = PrefixedStorageKey::new_ref(&parent_storage);
+									let storage_key = match ChildType::from_prefixed_key(&storage_key) {
+										Some((ChildType::ParentKeyId, storage_key)) => storage_key,
+										None => return Err(Error::Backend("Invalid child storage key.".to_string())),
+									};
+									let entry = storage.children_default.entry(storage_key.to_vec())
+										.or_insert_with(|| StorageChild {
+											data: Default::default(),
+											child_info: ChildInfo::new_default(storage_key),
+										});
+									for (key, value) in state.key_values.iter() {
+										entry.data.insert(key.clone(), value.clone());
+									}
+								}
+							}
+						}
 
 						let state_root = operation.op.reset_storage(storage)?;
 						if state_root != *import_headers.post().state_root() {
@@ -1232,18 +1256,6 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 		trace!("Collected {} uncles", uncles.len());
 		Ok(uncles)
 	}
-
-	/// Prepare in-memory header that is used in execution environment.
-	fn prepare_environment_block(&self, parent: &BlockId<Block>) -> sp_blockchain::Result<Block::Header> {
-		let parent_hash = self.backend.blockchain().expect_block_hash_from_id(parent)?;
-		Ok(<<Block as BlockT>::Header as HeaderT>::new(
-			self.backend.blockchain().expect_block_number_from_id(parent)? + One::one(),
-			Default::default(),
-			Default::default(),
-			parent_hash,
-			Default::default(),
-		))
-	}
 }
 
 impl<B, E, Block, RA> UsageProvider<Block> for Client<B, E, Block, RA> where
@@ -1302,10 +1314,8 @@ impl<B, E, Block, RA> ProofProvider<Block> for Client<B, E, Block, RA> where
 		)?;
 
 		let state = self.state_at(id)?;
-		let header = self.prepare_environment_block(id)?;
 		prove_execution(
 			state,
-			header,
 			&self.executor,
 			method,
 			call_data,
@@ -1341,66 +1351,148 @@ impl<B, E, Block, RA> ProofProvider<Block> for Client<B, E, Block, RA> where
 	fn read_proof_collection(
 		&self,
 		id: &BlockId<Block>,
-		start_key: &[u8],
+		start_key: &[Vec<u8>],
 		size_limit: usize,
-	) -> sp_blockchain::Result<(StorageProof, u32)> {
+	) -> sp_blockchain::Result<(CompactProof, u32)> {
 		let state = self.state_at(id)?;
-		Ok(prove_range_read_with_size::<_, HashFor<Block>>(
-				state,
-				None,
-				None,
-				size_limit,
-				Some(start_key)
-		)?)
+		let root = state.storage_root(std::iter::empty()).0;
+
+		let (proof, count) = prove_range_read_with_child_with_size::<_, HashFor<Block>>(
+			state,
+			size_limit,
+			start_key,
+		)?;
+		let proof = sp_trie::encode_compact::<sp_trie::Layout<HashFor<Block>>>(proof, root)
+			.map_err(|e| sp_blockchain::Error::from_state(Box::new(e)))?;
+		Ok((proof, count))
 	}
 
 	fn storage_collection(
 		&self,
 		id: &BlockId<Block>,
-		start_key: &[u8],
+		start_key: &[Vec<u8>],
 		size_limit: usize,
-	) -> sp_blockchain::Result<Vec<(Vec<u8>, Vec<u8>)>> {
+	) -> sp_blockchain::Result<Vec<(KeyValueStorageLevel, bool)>> {
+		if start_key.len() > MAX_NESTED_TRIE_DEPTH {
+			return Err(Error::Backend("Invalid start key.".to_string()));
+		}
 		let state = self.state_at(id)?;
-		let mut current_key = start_key.to_vec();
+		let child_info = |storage_key: &Vec<u8>| -> sp_blockchain::Result<ChildInfo> {
+			let storage_key = PrefixedStorageKey::new_ref(&storage_key);
+			match ChildType::from_prefixed_key(&storage_key) {
+				Some((ChildType::ParentKeyId, storage_key)) => Ok(ChildInfo::new_default(storage_key)),
+				None => Err(Error::Backend("Invalid child storage key.".to_string())),
+			}
+		};
+		let mut current_child = if start_key.len() == 2 {
+			let start_key = start_key.get(0).expect("checked len");
+			if let Some(child_root) = state.storage(&start_key)
+				.map_err(|e| sp_blockchain::Error::from_state(Box::new(e)))? {
+				Some((child_info(start_key)?, child_root))
+			} else {
+				return Err(Error::Backend("Invalid root start key.".to_string()));
+			}
+		} else {
+			None
+		};
+		let mut current_key = start_key.last().map(Clone::clone).unwrap_or(Vec::new());
 		let mut total_size = 0;
-		let mut entries = Vec::new();
-		while let Some(next_key) = state
-			.next_storage_key(&current_key)
-			.map_err(|e| sp_blockchain::Error::from_state(Box::new(e)))?
-		{
-			let value = state
-				.storage(next_key.as_ref())
-				.map_err(|e| sp_blockchain::Error::from_state(Box::new(e)))?
-				.unwrap_or_default();
-			let size = value.len() + next_key.len();
-			if total_size + size > size_limit && !entries.is_empty() {
+		let mut result = vec![(KeyValueStorageLevel {
+			state_root: Vec::new(),
+			key_values: Vec::new(),
+			parent_storage_keys: Vec::new(),
+		}, false)];
+
+		let mut child_roots = HashSet::new();
+		loop {
+			let mut entries = Vec::new();
+			let mut complete = true;
+			let mut switch_child_key = None;
+			while let Some(next_key) = if let Some(child) = current_child.as_ref() {
+				state
+					.next_child_storage_key(&child.0, &current_key)
+					.map_err(|e| sp_blockchain::Error::from_state(Box::new(e)))?
+			} else {
+				state
+					.next_storage_key(&current_key)
+					.map_err(|e| sp_blockchain::Error::from_state(Box::new(e)))?
+			} {
+				let value = if let Some(child) = current_child.as_ref() {
+					state
+						.child_storage(&child.0, next_key.as_ref())
+						.map_err(|e| sp_blockchain::Error::from_state(Box::new(e)))?
+						.unwrap_or_default()
+				} else {
+					state
+						.storage(next_key.as_ref())
+						.map_err(|e| sp_blockchain::Error::from_state(Box::new(e)))?
+						.unwrap_or_default()
+				};
+				let size = value.len() + next_key.len();
+				if total_size + size > size_limit && !entries.is_empty() {
+					complete = false;
+					break;
+				}
+				total_size += size;
+
+				if current_child.is_none()
+					&& sp_core::storage::well_known_keys::is_child_storage_key(next_key.as_slice()) {
+					if !child_roots.contains(value.as_slice()) {
+						child_roots.insert(value.clone());
+						switch_child_key = Some((next_key.clone(), value.clone()));
+						entries.push((next_key.clone(), value));
+						break;
+					}
+				}
+				entries.push((next_key.clone(), value));
+				current_key = next_key;
+			}
+			if let Some((child, child_root)) = switch_child_key.take() {
+				result[0].0.key_values.extend(entries.into_iter());
+				current_child = Some((child_info(&child)?, child_root));
+				current_key = Vec::new();
+			} else if let Some((child, child_root)) = current_child.take() {
+				current_key = child.into_prefixed_storage_key().into_inner();
+				result.push((KeyValueStorageLevel {
+					state_root: child_root,
+					key_values: entries,
+					parent_storage_keys: Vec::new(),
+				}, complete));
+				if !complete {
+					break;
+				}
+			} else {
+				result[0].0.key_values.extend(entries.into_iter());
+				result[0].1 = complete;
 				break;
 			}
-			total_size += size;
-			entries.push((next_key.clone(), value));
-			current_key = next_key;
 		}
-		Ok(entries)
-
+		Ok(result)
 	}
 
 	fn verify_range_proof(
 		&self,
 		root: Block::Hash,
-		proof: StorageProof,
-		start_key: &[u8],
-	) -> sp_blockchain::Result<(Vec<(Vec<u8>, Vec<u8>)>, bool)> {
-		Ok(read_range_proof_check::<HashFor<Block>>(
-				root,
-				proof,
-				None,
-				None,
-				None,
-				Some(start_key),
-		)?)
+		proof: CompactProof,
+		start_key: &[Vec<u8>],
+	) -> sp_blockchain::Result<(KeyValueStates, usize)> {
+		let mut db = sp_state_machine::MemoryDB::<HashFor<Block>>::new(&[]);
+		let _ = sp_trie::decode_compact::<sp_state_machine::Layout<HashFor<Block>>, _, _>(
+			&mut db,
+			proof.iter_compact_encoded_nodes(),
+			Some(&root),
+		).map_err(|e| {
+			sp_blockchain::Error::from_state(Box::new(e))
+		})?;
+		let proving_backend = sp_state_machine::TrieBackend::new(db, root);
+		let state = read_range_proof_check_with_child_on_proving_backend::<HashFor<Block>>(
+				&proving_backend,
+				start_key,
+		)?;
+
+		Ok(state)
 	}
 }
-
 
 impl<B, E, Block, RA> BlockBuilderProvider<B, Block, Self> for Client<B, E, Block, RA>
 	where
@@ -1771,12 +1863,10 @@ impl<B, E, Block, RA> CallApiAt<Block> for Client<B, E, Block, RA> where
 		'a,
 		R: Encode + Decode + PartialEq,
 		NC: FnOnce() -> result::Result<R, sp_api::ApiError> + UnwindSafe,
-		C: CoreApi<Block>,
 	>(
 		&self,
-		params: CallApiAtParams<'a, Block, C, NC, B::State>,
+		params: CallApiAtParams<'a, Block, NC, B::State>,
 	) -> Result<NativeOrEncoded<R>, sp_api::ApiError> {
-		let core_api = params.core_api;
 		let at = params.at;
 
 		let (manager, extensions) = self.execution_extensions.manager_and_extensions(
@@ -1784,16 +1874,12 @@ impl<B, E, Block, RA> CallApiAt<Block> for Client<B, E, Block, RA> where
 			params.context,
 		);
 
-		self.executor.contextual_call::<_, fn(_,_) -> _,_,_>(
-			|| core_api
-				.initialize_block(at, &self.prepare_environment_block(at)?)
-				.map_err(Error::RuntimeApiError),
+		self.executor.contextual_call::<fn(_,_) -> _, _, _>(
 			at,
 			params.function,
 			&params.arguments,
 			params.overlayed_changes,
 			Some(params.storage_transaction_cache),
-			params.initialize_block,
 			manager,
 			params.native_call,
 			params.recorder,
