@@ -104,7 +104,7 @@ impl<B: BlockT> WarpSync<B> {
 				match self.warp_sync_provider.verify(
 					&response,
 					*set_id,
-					std::mem::take(authorities),
+					authorities.clone(),
 				) {
 					Err(e) => {
 						log::debug!(target: "sync", "Bad warp proof response: {:?}", e);

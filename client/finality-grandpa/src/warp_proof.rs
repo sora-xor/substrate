@@ -35,6 +35,7 @@ use sc_network::warp_request_handler::{
 };
 
 use std::sync::Arc;
+use std::collections::HashMap;
 
 /// Warp proof processing error.
 #[derive(Debug, derive_more::Display, derive_more::From)]
@@ -208,6 +209,7 @@ impl<Block: BlockT> WarpSyncProof<Block> {
 		&self,
 		set_id: SetId,
 		authorities: AuthorityList,
+		hard_forks: &HashMap<(Block::Hash, NumberFor<Block>), (SetId, AuthorityList)>,
 	) -> Result<(SetId, AuthorityList), Error>
 	where
 		NumberFor<Block>: BlockNumberOps,
@@ -216,26 +218,37 @@ impl<Block: BlockT> WarpSyncProof<Block> {
 		let mut current_authorities = authorities;
 
 		for (fragment_num, proof) in self.proofs.iter().enumerate() {
-			proof
-				.justification
-				.verify(current_set_id, &current_authorities)
-				.map_err(|err| Error::InvalidProof(err.to_string()))?;
+			let hash = proof.header.hash();
+			let number = *proof.header.number();
 
-			if proof.justification.target().1 != proof.header.hash() {
-				return Err(Error::InvalidProof(
-					"Mismatch between header and justification".to_owned()
-				));
-			}
+			if let Some((set_id, list)) = hard_forks.get(&(hash.clone(), number)) {
+				current_set_id = *set_id;
+				current_authorities = list.clone();
+			} else {
+				proof
+					.justification
+					.verify(current_set_id, &current_authorities)
+					.map_err(|err| {
+						println!("MMM, forks={:?}, hash={:?}, number={:?}", hard_forks, hash, number);
+						Error::InvalidProof(err.to_string())
+					})?;
 
-			if let Some(scheduled_change) = find_scheduled_change::<Block>(&proof.header) {
-				current_authorities = scheduled_change.next_authorities;
-				current_set_id += 1;
-			} else if fragment_num != self.proofs.len() - 1 || !self.is_finished {
-				// Only the last fragment of the last proof is allowed to be missing the authority
-				// set change.
-				return Err(Error::InvalidProof(
-					"Header is missing authority set change digest".to_string(),
-				));
+				if proof.justification.target().1 != hash {
+					return Err(Error::InvalidProof(
+						"Mismatch between header and justification".to_owned()
+					));
+				}
+
+				if let Some(scheduled_change) = find_scheduled_change::<Block>(&proof.header) {
+					current_authorities = scheduled_change.next_authorities;
+					current_set_id += 1;
+				} else if fragment_num != self.proofs.len() - 1 || !self.is_finished {
+					// Only the last fragment of the last proof is allowed to be missing the authority
+					// set change.
+					return Err(Error::InvalidProof(
+						"Header is missing authority set change digest".to_string(),
+					));
+				}
 			}
 		}
 		Ok((current_set_id, current_authorities))
@@ -249,6 +262,7 @@ where
 {
 	backend: Arc<Backend>,
 	authority_set: SharedAuthoritySet<Block::Hash, NumberFor<Block>>,
+	hard_forks: HashMap<(Block::Hash, NumberFor<Block>), (SetId, AuthorityList)>,
 }
 
 impl<Block: BlockT, Backend: ClientBackend<Block>> NetworkProvider<Block, Backend>
@@ -258,11 +272,13 @@ where
 	/// Create a new istance for a given backend and authority set.
 	pub fn new(
 		backend: Arc<Backend>,
-		authority_set: SharedAuthoritySet<Block::Hash, NumberFor<Block>>
+		authority_set: SharedAuthoritySet<Block::Hash, NumberFor<Block>>,
+		hard_forks: Vec<(SetId, (Block::Hash, NumberFor<Block>), AuthorityList)>,
 	) -> Self {
 		NetworkProvider {
 			backend,
 			authority_set,
+			hard_forks: hard_forks.into_iter().map(|(s, hn, list)| (hn, (s, list))).collect(),
 		}
 	}
 }
@@ -292,7 +308,7 @@ where
 			.map_err(|e| format!("Proof decoding error: {:?}", e))?;
 		let last_header = proof.proofs.last().map(|p| p.header.clone())
 			.ok_or_else(|| "Empty proof".to_string())?;
-		let (next_set_id, next_authorities) = proof.verify(set_id, authorities)
+		let (next_set_id, next_authorities) = proof.verify(set_id, authorities, &self.hard_forks)
 			.map_err(|e| format!("Proof verification error: {:?}", e))?;
 		if proof.is_finished {
 			Ok(VerificationResult::<Block>::Complete(next_set_id, next_authorities, last_header))
@@ -442,6 +458,7 @@ mod tests {
 		let (new_set_id, new_authorities) = warp_sync_proof.verify(
 			0,
 			genesis_authorities,
+			&Default::default(),
 		).unwrap();
 
 		let expected_authorities = current_authorities
