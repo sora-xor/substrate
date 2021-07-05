@@ -17,7 +17,7 @@ sp-inherents = { version = "3.0.0", default-features = false, path = "../inheren
 sp-runtime = { version = "3.0.0", default-features = false, path = "../runtime" }
 sp-std = { version = "3.0.0", default-features = false, path = "../std" }
 codec = { package = "parity-scale-codec", version = "2.0.0", default-features = false, features = ["derive"] }
-async-trait = { version = "0.1.48", optional = true }
+async-trait = { version = "0.1.50", optional = true }
 
 [features]
 default = [ "std" ]
