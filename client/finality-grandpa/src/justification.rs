@@ -144,7 +144,6 @@ impl<Block: BlockT> GrandpaJustification<Block> {
 		) {
 			Ok(ref result) if result.ghost().is_some() => {},
 			_ => {
-				println!("BAD COMMIT {:?}, \nVOTERS={:?}\nSET={:?}", self.commit, voters, set_id);
 				let msg = "invalid commit in grandpa justification".to_string();
 				return Err(ClientError::BadJustification(msg));
 			}

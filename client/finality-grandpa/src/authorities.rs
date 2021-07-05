@@ -1690,6 +1690,18 @@ mod tests {
 	}
 
 	#[test]
+	fn authority_set_changes_insert() {
+		let mut authority_set_changes = AuthoritySetChanges::empty();
+		authority_set_changes.append(0, 41);
+		authority_set_changes.append(1, 81);
+		authority_set_changes.append(4, 121);
+
+		authority_set_changes.insert(101);
+		assert_eq!(authority_set_changes.get_set_id(100), AuthoritySetChangeId::Set(2, 101));
+		assert_eq!(authority_set_changes.get_set_id(101), AuthoritySetChangeId::Set(2, 101));
+	}
+
+	#[test]
 	fn authority_set_changes_for_complete_data() {
 		let mut authority_set_changes = AuthoritySetChanges::empty();
 		authority_set_changes.append(0, 41);

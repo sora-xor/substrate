@@ -174,7 +174,7 @@ impl<B: BlockT> WarpSync<B> {
 	}
 
 	/// Returns state sync estimated progress (percentage, bytes)
-	pub fn progress(&self) -> WarpSyncProgress <B> {
+	pub fn progress(&self) -> WarpSyncProgress<B> {
 		match &self.phase {
 			Phase::WarpProof {..} => WarpSyncProgress {
 				phase: WarpSyncPhase::DownloadingWarpProofs,

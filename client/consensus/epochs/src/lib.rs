@@ -249,6 +249,28 @@ impl<'a, E: Epoch> From<&'a PersistedEpoch<E>> for PersistedEpochHeader<E> {
 	}
 }
 
+impl<E: Epoch> PersistedEpoch<E> {
+	/// Map the epoch to a different type using a conversion function.
+	pub fn map<B, F, Hash, Number>(self, h: &Hash, n:& Number, f: &mut F) -> PersistedEpoch<B> where
+		B: Epoch<Slot=E::Slot>,
+		F: FnMut(&Hash, &Number, E) -> B,
+	{
+		match self {
+			PersistedEpoch::Genesis(epoch_0, epoch_1) => {
+				PersistedEpoch::Genesis(
+					f(h, n, epoch_0),
+					f(h, n, epoch_1),
+				)
+			},
+			PersistedEpoch::Regular(epoch_n) => {
+				PersistedEpoch::Regular(
+					f(h, n, epoch_n)
+				)
+			},
+		}
+	}
+}
+
 /// Persisted epoch header stored in ForkTree.
 #[derive(Encode, Decode, PartialEq, Eq, Debug)]
 pub enum PersistedEpochHeader<E: Epoch + std::fmt::Debug> {
@@ -263,6 +285,36 @@ impl<E: Epoch> Clone for PersistedEpochHeader<E> {
 		match self {
 			Self::Genesis(epoch_0, epoch_1) => Self::Genesis(epoch_0.clone(), epoch_1.clone()),
 			Self::Regular(epoch_n) => Self::Regular(epoch_n.clone()),
+		}
+	}
+}
+
+impl<E: Epoch> PersistedEpochHeader<E> {
+	/// Map the epoch header to a different type.
+	pub fn map<B>(self) -> PersistedEpochHeader<B> where
+		B: Epoch<Slot=E::Slot>,
+	{
+		match self {
+			PersistedEpochHeader::Genesis(epoch_0, epoch_1) => {
+				PersistedEpochHeader::Genesis(
+					EpochHeader {
+						start_slot: epoch_0.start_slot,
+						end_slot: epoch_0.end_slot,
+					},
+					EpochHeader {
+						start_slot: epoch_1.start_slot,
+						end_slot: epoch_1.end_slot,
+					},
+				)
+			},
+			PersistedEpochHeader::Regular(epoch_n) => {
+				PersistedEpochHeader::Regular(
+					EpochHeader {
+						start_slot: epoch_n.start_slot,
+						end_slot: epoch_n.end_slot,
+					},
+				)
+			},
 		}
 	}
 }
@@ -283,6 +335,7 @@ impl<E: Epoch> AsRef<E> for IncrementedEpoch<E> {
 }
 
 
+/// A pair of epochs for the gap block download validation.
 #[derive(Clone, Encode, Decode, Debug)]
 pub struct GapEpochs<Hash, Number, E:Epoch> {
 	current: (Hash, Number, PersistedEpoch<E>),
@@ -295,6 +348,8 @@ where
 	Number: Copy + PartialEq + std::fmt::Debug,
 	E: Epoch,
 {
+	/// Check if given slot matches one of the gap epochs.
+	/// Returns epoch identifier if it does.
 	fn matches(&self, slot: E::Slot) -> Option<(Hash, Number, EpochHeader<E>, EpochIdentifierPosition)>{
 		match &self.current {
 			(_, _, PersistedEpoch::Genesis(epoch_0, _)) if
@@ -322,6 +377,7 @@ where
 		}
 	}
 
+	/// Returns epoch data if it matches gve identifier.
 	pub fn epoch(&self, id: &EpochIdentifier<Hash, Number>) -> Option<&E> {
 		let persistent = match (&self.current, &self.next) {
 			((h, n, e), _) if h == &id.hash && n == &id.number => Some(e),
@@ -341,6 +397,7 @@ where
 		})
 	}
 
+	/// Import a new gap epoch, potentially replacing an old epoch.
 	fn import(
 		&mut self,
 		slot: E::Slot,
@@ -380,6 +437,8 @@ where
 /// same DAG entry, pinned to a specific block #1.
 ///
 /// Further epochs (epoch_2, ..., epoch_n) each get their own entry.
+///
+/// Also maintains gap epochs as long as there's an active gap download after a warp sync.
 #[derive(Clone, Encode, Decode, Debug)]
 pub struct EpochChanges<Hash, Number, E: Epoch> {
 	inner: ForkTree<Hash, Number, PersistedEpochHeader<E>>,
@@ -420,8 +479,7 @@ impl<Hash, Number, E: Epoch> EpochChanges<Hash, Number, E> where
 		self.inner.rebalance()
 	}
 
-
-	/// Cear gap epochs if any
+	/// Cear gap epochs if any.
 	pub fn clear_gap(&mut self) {
 		self.gap = None;
 	}
@@ -432,76 +490,16 @@ impl<Hash, Number, E: Epoch> EpochChanges<Hash, Number, E> where
 		F: FnMut(&Hash, &Number, E) -> B,
 	{
 		EpochChanges {
-			inner: self.inner.map(&mut |_, _, header| {
-				match header {
-					PersistedEpochHeader::Genesis(epoch_0, epoch_1) => {
-						PersistedEpochHeader::Genesis(
-							EpochHeader {
-								start_slot: epoch_0.start_slot,
-								end_slot: epoch_0.end_slot,
-							},
-							EpochHeader {
-								start_slot: epoch_1.start_slot,
-								end_slot: epoch_1.end_slot,
-							},
-						)
-					},
-					PersistedEpochHeader::Regular(epoch_n) => {
-						PersistedEpochHeader::Regular(
-							EpochHeader {
-								start_slot: epoch_n.start_slot,
-								end_slot: epoch_n.end_slot,
-							},
-						)
-					},
-				}
-			}),
-			gap: self.gap.map(|GapEpochs { current: (ch, cn, cheader), next }|
+			inner: self.inner.map(&mut |_, _, header: PersistedEpochHeader<E>| header.map()),
+			gap: self.gap.map(|GapEpochs { current: (h, n, header), next }|
 				GapEpochs {
-					current: (ch, cn, match cheader {
-						PersistedEpoch::Genesis(epoch_0, epoch_1) => {
-							PersistedEpoch::Genesis(
-								f(&ch, &cn, epoch_0),
-								f(&ch, &cn, epoch_1),
-							)
-						},
-						PersistedEpoch::Regular(epoch_n) => {
-							PersistedEpoch::Regular(
-								f(&ch, &cn, epoch_n)
-							)
-						},
-					}),
-					next: next.map(|(nh, nn, nheader)| (nh, nn, match nheader {
-						PersistedEpoch::Genesis(epoch_0, epoch_1) => {
-							PersistedEpoch::Genesis(
-								f(&nh, &nn, epoch_0),
-								f(&nh, &nn, epoch_1),
-							)
-						},
-						PersistedEpoch::Regular(epoch_n) => {
-							PersistedEpoch::Regular(
-								f(&nh, &nn, epoch_n)
-							)
-						},
-					})),
+					current: (h, n, header.map(&h, &n, &mut f)),
+					next: next.map(|(h, n, header)| (h, n, header.map(&h, &n, &mut f))),
 				}
 			),
-			epochs: self.epochs.into_iter().map(|((hash, number), epoch)| {
-				let bepoch = match epoch {
-					PersistedEpoch::Genesis(epoch_0, epoch_1) => {
-						PersistedEpoch::Genesis(
-							f(&hash, &number, epoch_0),
-							f(&hash, &number, epoch_1),
-						)
-					},
-					PersistedEpoch::Regular(epoch_n) => {
-						PersistedEpoch::Regular(
-							f(&hash, &number, epoch_n)
-						)
-					},
-				};
-				((hash, number), bepoch)
-			}).collect(),
+			epochs: self.epochs.into_iter().map(|((hash, number), epoch)|
+				((hash, number), epoch.map(&hash, &number, &mut f))
+			).collect(),
 		}
 	}
 
@@ -764,7 +762,6 @@ impl<Hash, Number, E: Epoch> EpochChanges<Hash, Number, E> where
 				Err(e) => e
 			}
 		} else if !self.epochs.is_empty() && matches!(epoch, PersistedEpoch::Genesis(_, _))  {
-			println!("Creating gap epoch {:?}", number);
 			self.gap = Some(GapEpochs{
 				current: (hash, number, epoch),
 				next: None,

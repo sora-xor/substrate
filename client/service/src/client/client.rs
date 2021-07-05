@@ -665,8 +665,6 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 			..
 		} = import_block;
 
-		//assert!(justifications.is_some() && finalized || justifications.is_none());
-
 		if !intermediates.is_empty() {
 			return Err(Error::IncompletePipeline)
 		}
@@ -757,6 +755,16 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 		}
 
 		let info = self.backend.blockchain().info();
+		let gap_block = info.block_gap.map_or(false, |(start, _)| *import_headers.post().number() == start);
+
+		// the block is lower than our last finalized block so it must revert
+		// finality, refusing import.
+		if status == blockchain::BlockStatus::Unknown
+			&& *import_headers.post().number() <= info.finalized_number
+			&& !gap_block
+		{
+			return Err(sp_blockchain::Error::NotInFinalizedChain);
+		}
 
 		// this is a fairly arbitrary choice of where to draw the line on making notifications,
 		// but the general goal is to only make notifications when we are already fully synced
@@ -817,20 +825,10 @@ impl<B, E, Block, RA> Client<B, E, Block, RA> where
 			None => None,
 		};
 
-		let mut is_new_best = finalized || match fork_choice {
+		let is_new_best = !gap_block && (finalized || match fork_choice {
 			ForkChoiceStrategy::LongestChain => import_headers.post().number() > &info.best_number,
 			ForkChoiceStrategy::Custom(v) => v,
-		};
-
-		// the block is lower than our last finalized block so it must revert
-		// finality, refusing import.
-		if status == blockchain::BlockStatus::Unknown
-			&& *import_headers.post().number() <= info.finalized_number
-			&& is_new_best
-		{
-			is_new_best = false;
-			//return Err(sp_blockchain::Error::NotInFinalizedChain);
-		}
+		});
 
 		let leaf_state = if finalized {
 			NewBlockState::Final

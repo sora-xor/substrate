@@ -769,7 +769,7 @@ mod node_implementation {
 				return Ok(FindOutcome::Failure(false));
 			}
 			if *number == self.number && hash == &self.hash {
-				// This is not is not an ancestor, but the parent node definitely is.
+				// This is not an ancestor that we seek, but the parent node definitely is.
 				return Ok(FindOutcome::Failure(true));
 			}
 

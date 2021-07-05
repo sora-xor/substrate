@@ -22,9 +22,9 @@ use futures::channel::{mpsc, oneshot};
 use futures::stream::StreamExt;
 use log::debug;
 use sp_runtime::traits::Block as BlockT;
-use sp_finality_grandpa::{SetId, AuthorityList};
 use std::time::Duration;
 use std::sync::Arc;
+pub use sp_finality_grandpa::{SetId, AuthorityList};
 
 /// Scale-encoded warp sync proof response.
 pub struct EncodedProof(pub Vec<u8>);
@@ -50,7 +50,7 @@ pub enum VerificationResult<Block: BlockT> {
 pub trait WarpSyncProvider<B: BlockT>: Send + Sync {
 	/// Generate proof starting at given block hash. The proof is accumulated until maximum proof size is reached.
 	fn generate(&self, start: B::Hash) -> Result<EncodedProof, String>;
-	/// Verify warp proof agains current set of authorities.
+	/// Verify warp proof against current set of authorities.
 	fn verify(
 		&self,
 		proof: &EncodedProof,
