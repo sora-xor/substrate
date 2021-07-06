@@ -1584,7 +1584,7 @@ impl<Block: BlockT> Backend<Block> {
 							hash
 						)?;
 					}
-					if start >= end {
+					if start > end {
 						transaction.remove(columns::META, meta_keys::BLOCK_GAP);
 						block_gap = None;
 						debug!(target: "db", "Removed block gap.");
