@@ -26,7 +26,7 @@ frame-support-test = { version = "3.0.0", path = "../support/test" }
 pallet-balances = { version = "3.0.0", path = "../balances" }
 sp-core = { version = "3.0.0", path = "../../primitives/core" }
 sp-io = { version = "3.0.0", path = "../../primitives/io" }
-serde = { version = "1.0.101" }
+serde = { version = "1.0.126" }
 
 [features]
 default = ["std"]
