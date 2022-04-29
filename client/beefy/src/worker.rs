@@ -17,7 +17,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use std::{
-	collections::{BTreeSet, VecDeque},
+	collections::{BTreeMap, BTreeSet},
 	fmt::Debug,
 	marker::PhantomData,
 	sync::Arc,
@@ -33,7 +33,7 @@ use sc_client_api::{Backend, FinalityNotification, FinalityNotifications};
 use sc_network_gossip::GossipEngine;
 
 use sp_api::{BlockId, ProvideRuntimeApi};
-use sp_arithmetic::traits::AtLeast32Bit;
+use sp_arithmetic::traits::{AtLeast32Bit, Saturating};
 use sp_consensus::SyncOracle;
 use sp_mmr_primitives::MmrApi;
 use sp_runtime::{
@@ -87,7 +87,7 @@ pub(crate) struct BeefyWorker<B: Block, BE, C, R, SO> {
 	metrics: Option<Metrics>,
 	rounds: Option<Rounds<Payload, B>>,
 	/// Buffer holding votes for blocks that the client hasn't seen finality for.
-	pending_votes: VecDeque<VoteMessage<NumberFor<B>, AuthorityId, Signature>>,
+	pending_votes: BTreeMap<NumberFor<B>, Vec<VoteMessage<NumberFor<B>, AuthorityId, Signature>>>,
 	finality_notifications: FinalityNotifications<B>,
 	/// Best block we received a GRANDPA notification for
 	best_grandpa_block_header: <B as Block>::Header,
@@ -149,7 +149,7 @@ where
 			min_block_delta: min_block_delta.max(1),
 			metrics,
 			rounds: None,
-			pending_votes: VecDeque::new(),
+			pending_votes: BTreeMap::new(),
 			finality_notifications: client.finality_notification_stream(),
 			best_grandpa_block_header: last_finalized_header,
 			best_beefy_block: None,
@@ -302,31 +302,22 @@ where
 
 		let best_grandpa = *self.best_grandpa_block_header.number();
 		// Handle any pending votes for now finalized blocks.
-		let votes_to_handle: Vec<VoteMessage<NumberFor<B>, AuthorityId, Signature>> = self
-			.pending_votes
-			.iter()
-			.filter_map(|v| {
-				if v.commitment.block_number < best_grandpa {
-					None
-				} else {
-					Some(v.clone())
+		let still_pending =
+			self.pending_votes.split_off(&(best_grandpa.saturating_add(1u32.into())));
+		let votes_to_handle = std::mem::replace(&mut self.pending_votes, still_pending);
+		for (num, votes) in votes_to_handle.into_iter() {
+			if Some(num) > self.best_beefy_block {
+				debug!(target: "beefy", "🥩 Handling buffered votes for now GRANDPA finalized block: {:?}.", num);
+				for v in votes.into_iter() {
+					self.handle_vote(
+						(v.commitment.payload, v.commitment.block_number),
+						(v.id, v.signature),
+						false,
+					);
 				}
-			})
-			.collect();
-		// Have to do it in two steps because we can't borrow `self` in `pending_votes.retain()`,
-		// then borrow it again in `self.handle_vote()`.
-		self.pending_votes.retain(|v| v.commitment.block_number < best_grandpa);
-		for v in votes_to_handle.into_iter() {
-			debug!(
-				target: "beefy",
-				"🥩 Handling buffered vote for not now finalized block: {:?}.",
-				v.commitment.block_number
-			);
-			self.handle_vote(
-				(v.commitment.payload, v.commitment.block_number),
-				(v.id, v.signature),
-				false,
-			);
+			} else {
+				debug!(target: "beefy", "🥩 Dropping outdated buffered votes for now BEEFY finalized block: {:?}.", num);
+			}
 		}
 
 		// Vote if there's now a new vote target.
@@ -548,15 +539,16 @@ where
 				},
 				vote = votes.next().fuse() => {
 					if let Some(vote) = vote {
-						if vote.commitment.block_number < *self.best_grandpa_block_header.number() {
+						let block_num = vote.commitment.block_number;
+						if block_num > *self.best_grandpa_block_header.number() {
 							// Only handle votes for blocks we _know_ have been finalized.
 							// Buffer vote to be handled later.
 							debug!(
 								target: "beefy",
 								"🥩 Buffering vote for not (yet) finalized block: {:?}.",
-								vote.commitment.block_number
+								block_num
 							);
-							self.pending_votes.push_back(vote);
+							self.pending_votes.entry(block_num).or_default().push(vote);
 						} else {
 							self.handle_vote(
 								(vote.commitment.payload, vote.commitment.block_number),
