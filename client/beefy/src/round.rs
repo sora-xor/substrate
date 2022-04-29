@@ -101,24 +101,20 @@ where
 	P: Ord + Hash + Clone,
 	B: Block,
 {
-	pub(crate) fn validator_set_id_for(&self, block_number: NumberFor<B>) -> ValidatorSetId {
+	pub(crate) fn validator_set_for(&self, block_number: NumberFor<B>) -> &ValidatorSet<Public> {
 		if block_number > self.session_start {
-			self.validator_set.id()
+			&self.validator_set
 		} else {
-			self.prev_validator_set.id()
+			&self.prev_validator_set
 		}
+	}
+
+	pub(crate) fn validator_set_id_for(&self, block_number: NumberFor<B>) -> ValidatorSetId {
+		self.validator_set_for(block_number).id()
 	}
 
 	pub(crate) fn validators_for(&self, block_number: NumberFor<B>) -> &[Public] {
-		if block_number > self.session_start {
-			self.validator_set.validators()
-		} else {
-			self.prev_validator_set.validators()
-		}
-	}
-
-	pub(crate) fn validator_set(&self) -> &ValidatorSet<Public> {
-		&self.validator_set
+		self.validator_set_for(block_number).validators()
 	}
 
 	pub(crate) fn session_start(&self) -> &NumberFor<B> {
@@ -143,7 +139,7 @@ where
 				round.1
 			);
 			false
-		} else if !self.validator_set.validators().iter().any(|id| vote.0 == *id) {
+		} else if !self.validators_for(round.1).iter().any(|id| vote.0 == *id) {
 			debug!(
 				target: "beefy",
 				"🥩 received vote {:?} from validator that is not in the validator set, ignoring",
@@ -162,7 +158,7 @@ where
 		let done = self
 			.rounds
 			.get(round)
-			.map(|tracker| tracker.is_done(threshold(self.validator_set.len())))
+			.map(|tracker| tracker.is_done(threshold(self.validators_for(round.1).len())))
 			.unwrap_or(false);
 		trace!(target: "beefy", "🥩 Round #{} done: {}", round.1, done);
 
@@ -170,12 +166,11 @@ where
 			// remove this and older (now stale) rounds
 			let signatures = self.rounds.remove(round)?.votes;
 			self.rounds.retain(|&(_, number), _| number > round.1);
-			self.best_done = self.best_done.clone().max(Some(round.1.clone()));
+			self.best_done = self.best_done.max(Some(round.1));
 			debug!(target: "beefy", "🥩 Concluded round #{}", round.1);
 
 			Some(
-				self.validator_set
-					.validators()
+				self.validators_for(round.1)
 					.iter()
 					.map(|authority_id| signatures.get(authority_id).cloned())
 					.collect(),

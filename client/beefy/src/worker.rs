@@ -238,7 +238,11 @@ where
 	}
 
 	/// Handle session changes by starting new voting round for mandatory blocks.
-	fn init_session_at(&mut self, active: ValidatorSet<AuthorityId>, session_start: NumberFor<B>) {
+	fn init_session_at(
+		&mut self,
+		active: ValidatorSet<AuthorityId>,
+		new_session_start: NumberFor<B>,
+	) {
 		debug!(target: "beefy", "🥩 New active validator set: {:?}", active);
 		metric_set!(self, beefy_validator_set_id, active.id());
 		// BEEFY should produce a signed commitment for each session
@@ -251,18 +255,18 @@ where
 
 		if log_enabled!(target: "beefy", log::Level::Debug) {
 			// verify the new validator set - only do it if we're also logging the warning
-			let _ = self.verify_validator_set(&session_start, &active);
+			let _ = self.verify_validator_set(&new_session_start, &active);
 		}
 
 		let prev_validator_set = if let Some(r) = &self.rounds {
-			r.validator_set().clone()
+			r.validator_set_for(new_session_start).clone()
 		} else {
 			// no previous rounds present use new validator set instead (genesis case)
 			active.clone()
 		};
 		let id = active.id();
-		self.rounds = Some(Rounds::new(session_start, active, prev_validator_set));
-		info!(target: "beefy", "🥩 New Rounds for validator set id: {:?} with session_start {:?}", id, session_start);
+		self.rounds = Some(Rounds::new(new_session_start, active, prev_validator_set));
+		info!(target: "beefy", "🥩 New Rounds for validator set id: {:?} with session_start {:?}", id, new_session_start);
 	}
 
 	fn handle_finality_notification(&mut self, notification: &FinalityNotification<B>) {
@@ -970,9 +974,10 @@ pub(crate) mod tests {
 		worker.init_session_at(validator_set.clone(), 1);
 
 		let worker_rounds = worker.rounds.as_ref().unwrap();
-		assert_eq!(worker_rounds.validator_set(), &validator_set);
 		assert_eq!(worker_rounds.session_start(), &1);
 		// in genesis case both current and prev validator sets are the same
+		assert_eq!(worker_rounds.validator_set_for(1), &validator_set);
+		assert_eq!(worker_rounds.validator_set_for(2), &validator_set);
 		assert_eq!(worker_rounds.validator_set_id_for(1), validator_set.id());
 		assert_eq!(worker_rounds.validator_set_id_for(2), validator_set.id());
 
@@ -984,11 +989,12 @@ pub(crate) mod tests {
 		worker.init_session_at(new_validator_set.clone(), 11);
 
 		let worker_rounds = worker.rounds.as_ref().unwrap();
-		assert_eq!(worker_rounds.validator_set(), &new_validator_set);
 		assert_eq!(worker_rounds.session_start(), &11);
 		// mandatory block gets prev set, further blocks get new set
+		assert_eq!(worker_rounds.validator_set_for(11), &validator_set);
+		assert_eq!(worker_rounds.validator_set_for(12), &new_validator_set);
+		assert_eq!(worker_rounds.validator_set_for(13), &new_validator_set);
 		assert_eq!(worker_rounds.validator_set_id_for(11), validator_set.id());
 		assert_eq!(worker_rounds.validator_set_id_for(12), new_validator_set.id());
-		assert_eq!(worker_rounds.validator_set_id_for(13), new_validator_set.id());
 	}
 }
