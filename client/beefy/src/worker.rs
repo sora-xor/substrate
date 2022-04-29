@@ -16,7 +16,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use std::{collections::BTreeSet, fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
+use std::{
+	collections::{BTreeSet, VecDeque},
+	fmt::Debug,
+	marker::PhantomData,
+	sync::Arc,
+	time::Duration,
+};
 
 use codec::{Codec, Decode, Encode};
 use futures::{future, FutureExt, StreamExt};
@@ -80,6 +86,8 @@ pub(crate) struct BeefyWorker<B: Block, BE, C, R, SO> {
 	min_block_delta: u32,
 	metrics: Option<Metrics>,
 	rounds: Option<Rounds<Payload, B>>,
+	/// Buffer holding votes for blocks that the client hasn't seen finality for.
+	pending_votes: VecDeque<VoteMessage<NumberFor<B>, AuthorityId, Signature>>,
 	finality_notifications: FinalityNotifications<B>,
 	/// Best block we received a GRANDPA notification for
 	best_grandpa_block_header: <B as Block>::Header,
@@ -141,6 +149,7 @@ where
 			min_block_delta: min_block_delta.max(1),
 			metrics,
 			rounds: None,
+			pending_votes: VecDeque::new(),
 			finality_notifications: client.finality_notification_stream(),
 			best_grandpa_block_header: last_finalized_header,
 			best_beefy_block: None,
@@ -289,6 +298,35 @@ where
 		// Check for and handle potential new session.
 		if let Some(new_validator_set) = find_authorities_change::<B>(header) {
 			self.init_session_at(new_validator_set, *header.number());
+		}
+
+		let best_grandpa = *self.best_grandpa_block_header.number();
+		// Handle any pending votes for now finalized blocks.
+		let votes_to_handle: Vec<VoteMessage<NumberFor<B>, AuthorityId, Signature>> = self
+			.pending_votes
+			.iter()
+			.filter_map(|v| {
+				if v.commitment.block_number < best_grandpa {
+					None
+				} else {
+					Some(v.clone())
+				}
+			})
+			.collect();
+		// Have to do it in two steps because we can't borrow `self` in `pending_votes.retain()`,
+		// then borrow it again in `self.handle_vote()`.
+		self.pending_votes.retain(|v| v.commitment.block_number < best_grandpa);
+		for v in votes_to_handle.into_iter() {
+			debug!(
+				target: "beefy",
+				"🥩 Handling buffered vote for not now finalized block: {:?}.",
+				v.commitment.block_number
+			);
+			self.handle_vote(
+				(v.commitment.payload, v.commitment.block_number),
+				(v.id, v.signature),
+				false,
+			);
 		}
 
 		// Vote if there's now a new vote target.
@@ -510,11 +548,22 @@ where
 				},
 				vote = votes.next().fuse() => {
 					if let Some(vote) = vote {
-						self.handle_vote(
-							(vote.commitment.payload, vote.commitment.block_number),
-							(vote.id, vote.signature),
-							false
-						);
+						if vote.commitment.block_number < *self.best_grandpa_block_header.number() {
+							// Only handle votes for blocks we _know_ have been finalized.
+							// Buffer vote to be handled later.
+							debug!(
+								target: "beefy",
+								"🥩 Buffering vote for not (yet) finalized block: {:?}.",
+								vote.commitment.block_number
+							);
+							self.pending_votes.push_back(vote);
+						} else {
+							self.handle_vote(
+								(vote.commitment.payload, vote.commitment.block_number),
+								(vote.id, vote.signature),
+								false
+							);
+						}
 					} else {
 						return;
 					}
