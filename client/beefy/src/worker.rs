@@ -259,6 +259,11 @@ where
 			active.id() != GENESIS_AUTHORITY_SET_ID &&
 			self.last_signed_id != 0
 		{
+			debug!(
+				target: "beefy", "🥩 Detected skipped session: active-id {:?}, last-signed-id {:?}",
+				active.id(),
+				self.last_signed_id,
+			);
 			metric_inc!(self, beefy_skipped_sessions);
 		}
 
@@ -267,14 +272,8 @@ where
 			let _ = self.verify_validator_set(&new_session_start, &active);
 		}
 
-		let prev_validator_set = if let Some(r) = &self.rounds {
-			r.validator_set_for(new_session_start).clone()
-		} else {
-			// no previous rounds present use new validator set instead (genesis case)
-			active.clone()
-		};
 		let id = active.id();
-		self.rounds = Some(Rounds::new(new_session_start, active, prev_validator_set));
+		self.rounds = Some(Rounds::new(new_session_start, active));
 		info!(target: "beefy", "🥩 New Rounds for validator set id: {:?} with session_start {:?}", id, new_session_start);
 	}
 
@@ -346,7 +345,7 @@ where
 				self.gossip_validator.conclude_round(round.1);
 
 				// id is stored for skipped session metric calculation
-				self.last_signed_id = rounds.validator_set_id_for(round.1);
+				self.last_signed_id = rounds.validator_set_id();
 
 				let block_num = round.1;
 				let commitment = Commitment {
@@ -423,7 +422,7 @@ where
 				debug!(target: "beefy", "🥩 Don't double vote for block number: {:?}", target_number);
 				return
 			}
-			(rounds.validators_for(target_number), rounds.validator_set_id_for(target_number))
+			(rounds.validators(), rounds.validator_set_id())
 		} else {
 			debug!(target: "beefy", "🥩 Missing validator set - can't vote for: {:?}", target_hash);
 			return
@@ -899,8 +898,7 @@ pub(crate) mod tests {
 			worker.best_grandpa_block_header = grandpa_header;
 			worker.best_beefy_block = best_beefy;
 			worker.min_block_delta = min_delta;
-			worker.rounds =
-				Some(Rounds::new(session_start, validator_set.clone(), validator_set.clone()));
+			worker.rounds = Some(Rounds::new(session_start, validator_set.clone()));
 		};
 
 		// under min delta
@@ -1017,10 +1015,8 @@ pub(crate) mod tests {
 		let worker_rounds = worker.rounds.as_ref().unwrap();
 		assert_eq!(worker_rounds.session_start(), &1);
 		// in genesis case both current and prev validator sets are the same
-		assert_eq!(worker_rounds.validator_set_for(1), &validator_set);
-		assert_eq!(worker_rounds.validator_set_for(2), &validator_set);
-		assert_eq!(worker_rounds.validator_set_id_for(1), validator_set.id());
-		assert_eq!(worker_rounds.validator_set_id_for(2), validator_set.id());
+		assert_eq!(worker_rounds.validators(), validator_set.validators());
+		assert_eq!(worker_rounds.validator_set_id(), validator_set.id());
 
 		// new validator set
 		let keys = &[Keyring::Bob];
@@ -1031,11 +1027,7 @@ pub(crate) mod tests {
 
 		let worker_rounds = worker.rounds.as_ref().unwrap();
 		assert_eq!(worker_rounds.session_start(), &11);
-		// mandatory block gets prev set, further blocks get new set
-		assert_eq!(worker_rounds.validator_set_for(11), &validator_set);
-		assert_eq!(worker_rounds.validator_set_for(12), &new_validator_set);
-		assert_eq!(worker_rounds.validator_set_for(13), &new_validator_set);
-		assert_eq!(worker_rounds.validator_set_id_for(11), validator_set.id());
-		assert_eq!(worker_rounds.validator_set_id_for(12), new_validator_set.id());
+		assert_eq!(worker_rounds.validators(), new_validator_set.validators());
+		assert_eq!(worker_rounds.validator_set_id(), new_validator_set.id());
 	}
 }
