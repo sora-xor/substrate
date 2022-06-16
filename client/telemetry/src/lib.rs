@@ -44,7 +44,10 @@ use serde::Serialize;
 use std::{
 	collections::{
 		hash_map::Entry::{Occupied, Vacant},
+		{
+		hash_map::Entry::{Occupied, Vacant},
 		HashMap,
+	},
 	},
 	sync::{atomic, Arc},
 };
@@ -157,10 +160,6 @@ impl TelemetryWorker {
 	///
 	/// Only one is needed per process.
 	pub fn new(buffer_size: usize) -> Result<Self> {
-		// Let's try to initialize a transport to get an early return.
-		// Later transport will be initialized multiple times in
-		// `::process_register`, so it's a convenient way to get an
-		// error as early as possible.
 		let _transport = initialize_transport()?;
 		let (message_sender, message_receiver) = mpsc::channel(buffer_size);
 		let (register_sender, register_receiver) = mpsc::unbounded();
