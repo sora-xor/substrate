@@ -44,10 +44,7 @@ use serde::Serialize;
 use std::{
 	collections::{
 		hash_map::Entry::{Occupied, Vacant},
-		{
-		hash_map::Entry::{Occupied, Vacant},
 		HashMap,
-	},
 	},
 	sync::{atomic, Arc},
 };
