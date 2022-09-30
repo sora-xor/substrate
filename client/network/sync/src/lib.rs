@@ -80,7 +80,7 @@ use std::{
 mod extra_requests;
 
 /// Maximum blocks to request in a single packet.
-const MAX_BLOCKS_TO_REQUEST: usize = 64;
+const MAX_BLOCKS_TO_REQUEST: usize = 1;
 
 /// Maximum blocks to store in the import queue.
 const MAX_IMPORTING_BLOCKS: usize = 2048;
