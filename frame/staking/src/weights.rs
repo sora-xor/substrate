@@ -43,6 +43,7 @@
 
 use frame_support::{traits::Get, weights::{Weight, constants::RocksDbWeight}};
 use sp_std::marker::PhantomData;
+const EXTRINSIC_FIXED_WEIGHT: Weight = 100_000_000;
 
 /// Weight functions needed for pallet_staking.
 pub trait WeightInfo {
@@ -66,6 +67,7 @@ pub trait WeightInfo {
 	fn cancel_deferred_slash(s: u32, ) -> Weight;
 	fn payout_stakers_dead_controller(n: u32, ) -> Weight;
 	fn payout_stakers_alive_staked(n: u32, ) -> Weight;
+	fn payout_stakers() -> Weight;
 	fn rebond(l: u32, ) -> Weight;
 	fn reap_stash(s: u32, ) -> Weight;
 	fn new_era(v: u32, n: u32, ) -> Weight;
@@ -319,6 +321,9 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 			.saturating_add(T::DbWeight::get().writes(6 as u64))
 			.saturating_add(T::DbWeight::get().writes((3 as u64).saturating_mul(n as u64)))
 	}
+    fn payout_stakers() -> Weight {
+        EXTRINSIC_FIXED_WEIGHT
+    }
 	// Storage: Staking Ledger (r:1 w:1)
 	// Storage: Balances Locks (r:1 w:1)
 	// Storage: System Account (r:1 w:1)
@@ -701,6 +706,9 @@ impl WeightInfo for () {
 			.saturating_add(RocksDbWeight::get().writes(6 as u64))
 			.saturating_add(RocksDbWeight::get().writes((3 as u64).saturating_mul(n as u64)))
 	}
+    fn payout_stakers() -> Weight {
+        EXTRINSIC_FIXED_WEIGHT
+    }
 	// Storage: Staking Ledger (r:1 w:1)
 	// Storage: Balances Locks (r:1 w:1)
 	// Storage: System Account (r:1 w:1)
