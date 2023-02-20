@@ -26,7 +26,7 @@ use frame_support::{
 	pallet_prelude::*,
 	traits::{
 		Currency, CurrencyToVote, Defensive, EstimateNextNewSession, Get, LockableCurrency,
-		UnixTime, WithdrawReasons,
+		UnixTime, WithdrawReasons, DefensiveResult
 	},
 	weights::Weight,
 };

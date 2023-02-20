@@ -43,7 +43,7 @@
 
 use frame_support::{traits::Get, weights::{Weight, constants::RocksDbWeight}};
 use sp_std::marker::PhantomData;
-const EXTRINSIC_FIXED_WEIGHT: Weight = 100_000_000;
+const EXTRINSIC_FIXED_WEIGHT: Weight = Weight::from_ref_time(100_000_000);
 
 /// Weight functions needed for pallet_staking.
 pub trait WeightInfo {

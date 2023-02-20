@@ -1,5 +1,5 @@
 pub use crate::weights::WeightInfo;
-use codec::{Decode, Encode};
+use codec::{Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_runtime::{Perbill, Percent, RuntimeDebug};
 use sp_std::prelude::*;
@@ -53,7 +53,7 @@ impl ValRewardCurve {
 	}
 }
 
-#[derive(PartialEq, Encode, Decode, Default, RuntimeDebug, TypeInfo)]
+#[derive(PartialEq, Encode, Decode, Default, RuntimeDebug, TypeInfo, MaxEncodedLen)]
 pub struct DurationWrapper {
 	secs: u64,
 	nanos: u32,
