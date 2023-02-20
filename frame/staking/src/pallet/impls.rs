@@ -24,8 +24,8 @@ use frame_election_provider_support::{
 use frame_support::{
 	pallet_prelude::*,
 	traits::{
-		Currency, CurrencyToVote, Defensive, EstimateNextNewSession, Get, Imbalance,
-		LockableCurrency, OnUnbalanced, UnixTime, WithdrawReasons,
+		Currency, CurrencyToVote, Defensive, EstimateNextNewSession, Get, LockableCurrency,
+		UnixTime, WithdrawReasons,
 	},
 	weights::{Weight, WithPostDispatchInfo},
 };
@@ -42,10 +42,13 @@ use sp_staking::{
 use sp_std::{collections::btree_map::BTreeMap, prelude::*};
 
 use crate::{
-	log, slashing, weights::WeightInfo, ActiveEraInfo, BalanceOf, EraPayout, Exposure, ExposureOf,
-	Forcing, IndividualExposure, Nominations, PositiveImbalanceOf, RewardDestination,
-	SessionInterface, StakingLedger, ValidatorPrefs,
+	log, slashing, weights::WeightInfo, ActiveEraInfo, BalanceOf, Exposure, ExposureOf, Forcing,
+	IndividualExposure, Nominations, RewardDestination, SessionInterface, StakingLedger,
+	ValidatorPrefs,
 };
+
+use crate::sora::{Duration, DurationWrapper, MultiCurrencyBalanceOf};
+use traits::MultiCurrency;
 
 use super::{pallet::*, STAKING_ID};
 
@@ -175,13 +178,11 @@ impl<T: Config> Pallet<T> {
 
 		Self::deposit_event(Event::<T>::PayoutStarted(era, ledger.stash.clone()));
 
-		let mut total_imbalance = PositiveImbalanceOf::<T>::zero();
 		// We can now make total validator payout:
 		if let Some(imbalance) =
 			Self::make_payout(&ledger.stash, validator_staking_payout + validator_commission_payout)
 		{
-			Self::deposit_event(Event::<T>::Rewarded(ledger.stash, imbalance.peek()));
-			total_imbalance.subsume(imbalance);
+			Self::deposit_event(Event::<T>::Rewarded(ledger.stash, imbalance));
 		}
 
 		// Track the number of payout ops to nominators. Note:
@@ -194,19 +195,17 @@ impl<T: Config> Pallet<T> {
 		for nominator in exposure.others.iter() {
 			let nominator_exposure_part = Perbill::from_rational(nominator.value, exposure.total);
 
-			let nominator_reward: BalanceOf<T> =
+			let nominator_reward: MultiCurrencyBalanceOf<T> =
 				nominator_exposure_part * validator_leftover_payout;
 			// We can now make nominator payout:
 			if let Some(imbalance) = Self::make_payout(&nominator.who, nominator_reward) {
 				// Note: this logic does not count payouts for `RewardDestination::None`.
 				nominator_payout_count += 1;
-				let e = Event::<T>::Rewarded(nominator.who.clone(), imbalance.peek());
+				let e = Event::<T>::Rewarded(nominator.who.clone(), imbalance);
 				Self::deposit_event(e);
-				total_imbalance.subsume(imbalance);
 			}
 		}
 
-		T::Reward::on_unbalanced(total_imbalance);
 		debug_assert!(nominator_payout_count <= T::MaxNominatorRewardedPerValidator::get());
 		Ok(Some(T::WeightInfo::payout_stakers_alive_staked(nominator_payout_count)).into())
 	}
@@ -230,23 +229,25 @@ impl<T: Config> Pallet<T> {
 
 	/// Actually make a payment to a staker. This uses the currency's reward function
 	/// to pay the right payee for the given staker account.
-	fn make_payout(stash: &T::AccountId, amount: BalanceOf<T>) -> Option<PositiveImbalanceOf<T>> {
+	fn make_payout(
+		stash: &T::AccountId,
+		amount: MultiCurrencyBalanceOf<T>,
+	) -> Option<MultiCurrencyBalanceOf<T>> {
 		let dest = Self::payee(stash);
 		match dest {
-			RewardDestination::Controller => Self::bonded(stash)
-				.map(|controller| T::Currency::deposit_creating(&controller, amount)),
-			RewardDestination::Stash => T::Currency::deposit_into_existing(stash, amount).ok(),
-			RewardDestination::Staked => Self::bonded(stash)
-				.and_then(|c| Self::ledger(&c).map(|l| (c, l)))
-				.and_then(|(controller, mut l)| {
-					l.active += amount;
-					l.total += amount;
-					let r = T::Currency::deposit_into_existing(stash, amount).ok();
-					Self::update_ledger(&controller, &l);
-					r
-				}),
+			RewardDestination::Controller => Self::bonded(stash).and_then(|controller| {
+				T::MultiCurrency::deposit(T::ValTokenId::get(), &controller, amount)
+					.ok()
+					.map(|_| amount)
+			}),
+			RewardDestination::Stash | RewardDestination::Staked =>
+				T::MultiCurrency::deposit(T::ValTokenId::get(), stash, amount)
+					.ok()
+					.map(|_| amount),
 			RewardDestination::Account(dest_account) =>
-				Some(T::Currency::deposit_creating(&dest_account, amount)),
+				T::MultiCurrency::deposit(T::ValTokenId::get(), &dest_account, amount)
+					.ok()
+					.map(|_| amount),
 			RewardDestination::None => None,
 		}
 	}
@@ -376,20 +377,29 @@ impl<T: Config> Pallet<T> {
 
 	/// Compute payout for era.
 	fn end_era(active_era: ActiveEraInfo, _session_index: SessionIndex) {
+		// This era reward percentage = 90% - (90% - 35%) * `time_since_genesis` / 5_years
 		// Note: active_era_start can be None if end era is called during genesis config.
 		if let Some(active_era_start) = active_era.start {
-			let now_as_millis_u64 = T::UnixTime::now().as_millis().saturated_into::<u64>();
+			let time_since_genesis = Duration::from(TimeSinceGenesis::<T>::get()) +
+				Duration::from_millis(
+					T::UnixTime::now().as_millis().saturated_into::<u64>() - active_era_start,
+				);
+			if time_since_genesis == Duration::from_secs(14) {
+				panic!();
+			}
+			TimeSinceGenesis::<T>::put(DurationWrapper::from(time_since_genesis));
+			let val_burned_percentage =
+				T::ValRewardCurve::get().current_reward_coefficient(time_since_genesis);
+			let era_val_burned = EraValBurned::<T>::get();
+			let validator_payout = val_burned_percentage * era_val_burned;
 
-			let era_duration = (now_as_millis_u64 - active_era_start).saturated_into::<u64>();
-			let staked = Self::eras_total_stake(&active_era.index);
-			let issuance = T::Currency::total_issuance();
-			let (validator_payout, rest) = T::EraPayout::era_payout(staked, issuance, era_duration);
-
-			Self::deposit_event(Event::<T>::EraPaid(active_era.index, validator_payout, rest));
+			Self::deposit_event(Event::<T>::EraPaid(active_era.index, validator_payout));
 
 			// Set ending era reward.
 			<ErasValidatorReward<T>>::insert(&active_era.index, validator_payout);
-			T::RewardRemainder::on_unbalanced(T::Currency::issue(rest));
+
+			let zero: MultiCurrencyBalanceOf<T> = 0u32.into();
+			EraValBurned::<T>::put(zero);
 
 			// Clear offending validators.
 			<OffendingValidators<T>>::kill();
