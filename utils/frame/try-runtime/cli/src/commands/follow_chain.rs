@@ -25,7 +25,7 @@ use sc_executor::NativeExecutionDispatch;
 use sc_service::Configuration;
 use serde::{de::DeserializeOwned, Serialize};
 use sp_core::H256;
-use sp_runtime::traits::{Block as BlockT, Header as HeaderT, NumberFor};
+use sp_runtime::{traits::{Block as BlockT, Header as HeaderT, NumberFor}, generic::SignedBlock};
 use std::{fmt::Debug, str::FromStr};
 use substrate_rpc_client::{ws_client, ChainApi, FinalizedHeaders, Subscription, WsClient};
 
@@ -105,10 +105,11 @@ where
 		let hash = header.hash();
 		let number = header.number();
 
-		let block: Block = ChainApi::<(), Block::Hash, Block::Header, _>::block(&rpc, Some(hash))
+		let block: SignedBlock<Block> = ChainApi::<(), Block::Hash, Block::Header, _>::block(&rpc, Some(hash))
 			.await
-			.unwrap()
-			.unwrap();
+			.unwrap().unwrap();
+
+		let block = block.block;
 
 		log::debug!(
 			target: LOG_TARGET,
