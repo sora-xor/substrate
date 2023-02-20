@@ -288,6 +288,32 @@ pub mod v10 {
 	}
 }
 
+pub mod lock_fix {
+	use super::*;
+	use frame_support::traits::{LockIdentifier, LockableCurrency};
+
+	const STAKING_ID: LockIdentifier = *b"staking ";
+
+	/// Migration to fix the locks.
+	pub struct LockFix<T>(sp_std::marker::PhantomData<T>);
+	impl<T: Config> OnRuntimeUpgrade for LockFix<T> {
+		fn on_runtime_upgrade() -> Weight {
+			let controllers = crate::Ledger::<T>::iter_keys().collect::<Vec<_>>();
+			for controller in controllers {
+				if let Some(ledger) = crate::Ledger::<T>::get(&controller) {
+					if ledger.total <= T::Currency::minimum_balance() {
+						T::Currency::remove_lock(STAKING_ID, &ledger.stash);
+						if let Err(e) = Pallet::<T>::kill_stash(&ledger.stash, u32::MAX) {
+							log!(warn, "failed to kill stash {:?}, possibly broken staking pallet state: {:?}", ledger.stash, e);
+						}
+					}
+				}
+			}
+			T::BlockWeights::get().max_block
+		}
+	}
+}
+
 pub mod v9 {
 	use super::*;
 	#[cfg(feature = "try-runtime")]

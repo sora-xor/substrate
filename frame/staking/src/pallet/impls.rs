@@ -26,7 +26,7 @@ use frame_support::{
 	pallet_prelude::*,
 	traits::{
 		Currency, CurrencyToVote, Defensive, DefensiveResult, EstimateNextNewSession, Get,
-		Imbalance, LockableCurrency, OnUnbalanced, TryCollect, UnixTime, WithdrawReasons,
+		LockableCurrency, TryCollect, UnixTime, WithdrawReasons,
 	},
 	weights::Weight,
 };
@@ -43,10 +43,13 @@ use sp_staking::{
 use sp_std::prelude::*;
 
 use crate::{
-	log, slashing, weights::WeightInfo, ActiveEraInfo, BalanceOf, EraPayout, Exposure, ExposureOf,
-	Forcing, IndividualExposure, MaxWinnersOf, Nominations, PositiveImbalanceOf, RewardDestination,
-	SessionInterface, StakingLedger, ValidatorPrefs,
+	log, slashing, weights::WeightInfo, ActiveEraInfo, BalanceOf, Exposure, ExposureOf, Forcing,
+	IndividualExposure, MaxWinnersOf, Nominations, RewardDestination, SessionInterface,
+	StakingLedger, ValidatorPrefs,
 };
+
+use crate::sora::{Duration, DurationWrapper, MultiCurrencyBalanceOf};
+use traits::MultiCurrency;
 
 use super::{pallet::*, STAKING_ID};
 
@@ -103,7 +106,7 @@ impl<T: Config> Pallet<T> {
 		}
 
 		let used_weight =
-			if ledger.unlocking.is_empty() && ledger.active < T::Currency::minimum_balance() {
+			if ledger.unlocking.is_empty() && ledger.active <= T::Currency::minimum_balance() {
 				// This account must have called `unbond()` with some value that caused the active
 				// portion to fall below existential deposit + will have no more unlocking chunks
 				// left. We can now safely remove all staking-related information.
@@ -164,9 +167,10 @@ impl<T: Config> Pallet<T> {
 			.retain(|&x| x >= current_era.saturating_sub(history_depth));
 
 		match ledger.claimed_rewards.binary_search(&era) {
-			Ok(_) =>
+			Ok(_) => {
 				return Err(Error::<T>::AlreadyClaimed
-					.with_weight(T::WeightInfo::payout_stakers_alive_staked(0))),
+					.with_weight(T::WeightInfo::payout_stakers_alive_staked(0)))
+			},
 			Err(pos) => ledger
 				.claimed_rewards
 				.try_insert(pos, era)
@@ -199,7 +203,7 @@ impl<T: Config> Pallet<T> {
 
 		// Nothing to do if they have no reward points.
 		if validator_reward_points.is_zero() {
-			return Ok(Some(T::WeightInfo::payout_stakers_alive_staked(0)).into())
+			return Ok(Some(T::WeightInfo::payout_stakers_alive_staked(0)).into());
 		}
 
 		// This is the fraction of the total reward that the validator and the
@@ -225,16 +229,11 @@ impl<T: Config> Pallet<T> {
 			validator_stash: ledger.stash.clone(),
 		});
 
-		let mut total_imbalance = PositiveImbalanceOf::<T>::zero();
 		// We can now make total validator payout:
 		if let Some(imbalance) =
 			Self::make_payout(&ledger.stash, validator_staking_payout + validator_commission_payout)
 		{
-			Self::deposit_event(Event::<T>::Rewarded {
-				stash: ledger.stash,
-				amount: imbalance.peek(),
-			});
-			total_imbalance.subsume(imbalance);
+			Self::deposit_event(Event::<T>::Rewarded { stash: ledger.stash, amount: imbalance });
 		}
 
 		// Track the number of payout ops to nominators. Note:
@@ -247,20 +246,17 @@ impl<T: Config> Pallet<T> {
 		for nominator in exposure.others.iter() {
 			let nominator_exposure_part = Perbill::from_rational(nominator.value, exposure.total);
 
-			let nominator_reward: BalanceOf<T> =
+			let nominator_reward: MultiCurrencyBalanceOf<T> =
 				nominator_exposure_part * validator_leftover_payout;
 			// We can now make nominator payout:
 			if let Some(imbalance) = Self::make_payout(&nominator.who, nominator_reward) {
 				// Note: this logic does not count payouts for `RewardDestination::None`.
 				nominator_payout_count += 1;
-				let e =
-					Event::<T>::Rewarded { stash: nominator.who.clone(), amount: imbalance.peek() };
+				let e = Event::<T>::Rewarded { stash: nominator.who.clone(), amount: imbalance };
 				Self::deposit_event(e);
-				total_imbalance.subsume(imbalance);
 			}
 		}
 
-		T::Reward::on_unbalanced(total_imbalance);
 		debug_assert!(nominator_payout_count <= T::MaxNominatorRewardedPerValidator::get());
 		Ok(Some(T::WeightInfo::payout_stakers_alive_staked(nominator_payout_count)).into())
 	}
@@ -284,23 +280,27 @@ impl<T: Config> Pallet<T> {
 
 	/// Actually make a payment to a staker. This uses the currency's reward function
 	/// to pay the right payee for the given staker account.
-	fn make_payout(stash: &T::AccountId, amount: BalanceOf<T>) -> Option<PositiveImbalanceOf<T>> {
+	fn make_payout(
+		stash: &T::AccountId,
+		amount: MultiCurrencyBalanceOf<T>,
+	) -> Option<MultiCurrencyBalanceOf<T>> {
 		let dest = Self::payee(stash);
 		match dest {
-			RewardDestination::Controller => Self::bonded(stash)
-				.map(|controller| T::Currency::deposit_creating(&controller, amount)),
-			RewardDestination::Stash => T::Currency::deposit_into_existing(stash, amount).ok(),
-			RewardDestination::Staked => Self::bonded(stash)
-				.and_then(|c| Self::ledger(&c).map(|l| (c, l)))
-				.and_then(|(controller, mut l)| {
-					l.active += amount;
-					l.total += amount;
-					let r = T::Currency::deposit_into_existing(stash, amount).ok();
-					Self::update_ledger(&controller, &l);
-					r
-				}),
-			RewardDestination::Account(dest_account) =>
-				Some(T::Currency::deposit_creating(&dest_account, amount)),
+			RewardDestination::Controller => Self::bonded(stash).and_then(|controller| {
+				T::MultiCurrency::deposit(T::ValTokenId::get(), &controller, amount)
+					.ok()
+					.map(|_| amount)
+			}),
+			RewardDestination::Stash | RewardDestination::Staked => {
+				T::MultiCurrency::deposit(T::ValTokenId::get(), stash, amount)
+					.ok()
+					.map(|_| amount)
+			},
+			RewardDestination::Account(dest_account) => {
+				T::MultiCurrency::deposit(T::ValTokenId::get(), &dest_account, amount)
+					.ok()
+					.map(|_| amount)
+			},
 			RewardDestination::None => None,
 		}
 	}
@@ -330,14 +330,14 @@ impl<T: Config> Pallet<T> {
 				_ => {
 					// Either `Forcing::ForceNone`,
 					// or `Forcing::NotForcing if era_length >= T::SessionsPerEra::get()`.
-					return None
+					return None;
 				},
 			}
 
 			// New era.
 			let maybe_new_era_validators = Self::try_trigger_new_era(session_index, is_genesis);
-			if maybe_new_era_validators.is_some() &&
-				matches!(ForceEra::<T>::get(), Forcing::ForceNew)
+			if maybe_new_era_validators.is_some()
+				&& matches!(ForceEra::<T>::get(), Forcing::ForceNew)
 			{
 				Self::set_force_era(Forcing::NotForcing);
 			}
@@ -434,25 +434,32 @@ impl<T: Config> Pallet<T> {
 
 	/// Compute payout for era.
 	fn end_era(active_era: ActiveEraInfo, _session_index: SessionIndex) {
+		// This era reward percentage = 90% - (90% - 35%) * `time_since_genesis` / 5_years
 		// Note: active_era_start can be None if end era is called during genesis config.
 		if let Some(active_era_start) = active_era.start {
-			let now_as_millis_u64 = T::UnixTime::now().as_millis().saturated_into::<u64>();
-
-			let era_duration = (now_as_millis_u64 - active_era_start).saturated_into::<u64>();
-			let staked = Self::eras_total_stake(&active_era.index);
-			let issuance = T::Currency::total_issuance();
-			let (validator_payout, remainder) =
-				T::EraPayout::era_payout(staked, issuance, era_duration);
+			let time_since_genesis = Duration::from(TimeSinceGenesis::<T>::get())
+				+ Duration::from_millis(
+					T::UnixTime::now().as_millis().saturated_into::<u64>() - active_era_start,
+				);
+			if time_since_genesis == Duration::from_secs(14) {
+				panic!();
+			}
+			TimeSinceGenesis::<T>::put(DurationWrapper::from(time_since_genesis));
+			let val_burned_percentage =
+				T::ValRewardCurve::get().current_reward_coefficient(time_since_genesis);
+			let era_val_burned = EraValBurned::<T>::get();
+			let validator_payout = val_burned_percentage * era_val_burned;
 
 			Self::deposit_event(Event::<T>::EraPaid {
 				era_index: active_era.index,
 				validator_payout,
-				remainder,
 			});
 
 			// Set ending era reward.
 			<ErasValidatorReward<T>>::insert(&active_era.index, validator_payout);
-			T::RewardRemainder::on_unbalanced(T::Currency::issue(remainder));
+
+			let zero: MultiCurrencyBalanceOf<T> = 0u32.into();
+			EraValBurned::<T>::put(zero);
 
 			// Clear offending validators.
 			<OffendingValidators<T>>::kill();
@@ -544,7 +551,7 @@ impl<T: Config> Pallet<T> {
 			}
 
 			Self::deposit_event(Event::StakingElectionFailed);
-			return None
+			return None;
 		}
 
 		Self::deposit_event(Event::StakersElected);
@@ -771,8 +778,8 @@ impl<T: Config> Pallet<T> {
 		let mut min_active_stake = u64::MAX;
 
 		let mut sorted_voters = T::VoterList::iter();
-		while all_voters.len() < max_allowed_len &&
-			voters_seen < (NPOS_MAX_ITERATIONS_COEFFICIENT * max_allowed_len as u32)
+		while all_voters.len() < max_allowed_len
+			&& voters_seen < (NPOS_MAX_ITERATIONS_COEFFICIENT * max_allowed_len as u32)
 		{
 			let voter = match sorted_voters.next() {
 				Some(voter) => {
@@ -847,8 +854,8 @@ impl<T: Config> Pallet<T> {
 		let mut targets_seen = 0;
 
 		let mut targets_iter = T::TargetList::iter();
-		while all_targets.len() < max_allowed_len &&
-			targets_seen < (NPOS_MAX_ITERATIONS_COEFFICIENT * max_allowed_len as u32)
+		while all_targets.len() < max_allowed_len
+			&& targets_seen < (NPOS_MAX_ITERATIONS_COEFFICIENT * max_allowed_len as u32)
 		{
 			let target = match targets_iter.next() {
 				Some(target) => {
@@ -995,7 +1002,7 @@ impl<T: Config> ElectionDataProvider for Pallet<T> {
 
 		// We can't handle this case yet -- return an error.
 		if maybe_max_len.map_or(false, |max_len| target_count > max_len as u32) {
-			return Err("Target snapshot too big")
+			return Err("Target snapshot too big");
 		}
 
 		Ok(Self::get_npos_targets(None))
@@ -1263,7 +1270,7 @@ where
 			add_db_reads_writes(1, 0);
 			if active_era.is_none() {
 				// This offence need not be re-submitted.
-				return consumed_weight
+				return consumed_weight;
 			}
 			active_era.expect("value checked not to be `None`; qed").index
 		};
@@ -1304,7 +1311,7 @@ where
 
 			// Skip if the validator is invulnerable.
 			if invulnerables.contains(stash) {
-				continue
+				continue;
 			}
 
 			let unapplied = slashing::compute_slash::<T>(slashing::SlashParams {
@@ -1685,8 +1692,8 @@ impl<T: Config> Pallet<T> {
 
 	fn check_count() -> Result<(), &'static str> {
 		ensure!(
-			<T as Config>::VoterList::count() ==
-				Nominators::<T>::count() + Validators::<T>::count(),
+			<T as Config>::VoterList::count()
+				== Nominators::<T>::count() + Validators::<T>::count(),
 			"wrong external count"
 		);
 		ensure!(
@@ -1713,9 +1720,10 @@ impl<T: Config> Pallet<T> {
 		ErasStakers::<T>::iter_prefix_values(era)
 			.map(|expo| {
 				ensure!(
-					expo.total ==
-						expo.own +
-							expo.others
+					expo.total
+						== expo.own
+							+ expo
+								.others
 								.iter()
 								.map(|e| e.value)
 								.fold(Zero::zero(), |acc, x| acc + x),

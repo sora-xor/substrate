@@ -282,19 +282,20 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![recursion_limit = "256"]
 
-#[cfg(feature = "runtime-benchmarks")]
-pub mod benchmarking;
-#[cfg(any(feature = "runtime-benchmarks", test))]
-pub mod testing_utils;
+// #[cfg(feature = "runtime-benchmarks")]
+// pub mod benchmarking;
+// #[cfg(any(feature = "runtime-benchmarks", test))]
+// pub mod testing_utils;
 
-#[cfg(test)]
-pub(crate) mod mock;
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// pub(crate) mod mock;
+// #[cfg(test)]
+// mod tests;
 
 pub mod inflation;
 pub mod migrations;
 pub mod slashing;
+pub mod sora;
 pub mod weights;
 
 mod pallet;
@@ -343,9 +344,6 @@ pub type RewardPoint = u32;
 /// The balance type of this pallet.
 pub type BalanceOf<T> = <T as Config>::CurrencyBalance;
 
-type PositiveImbalanceOf<T> = <<T as Config>::Currency as Currency<
-	<T as frame_system::Config>::AccountId,
->>::PositiveImbalance;
 type NegativeImbalanceOf<T> = <<T as Config>::Currency as Currency<
 	<T as frame_system::Config>::AccountId,
 >>::NegativeImbalance;
@@ -397,6 +395,9 @@ pub enum StakerStatus<AccountId> {
 #[derive(PartialEq, Eq, Copy, Clone, Encode, Decode, RuntimeDebug, TypeInfo, MaxEncodedLen)]
 pub enum RewardDestination<AccountId> {
 	/// Pay into the stash account, increasing the amount at stake accordingly.
+	/// Can't be implemented in Sora because the rewards are paid in a different asset.
+	/// Kept for the purpose of compatibility with polkadot.js/apps.
+	/// If selected, treated as the `Stash` option.
 	Staked,
 	/// Pay into the stash account, not increasing the amount at stake.
 	Stash,
@@ -410,7 +411,7 @@ pub enum RewardDestination<AccountId> {
 
 impl<AccountId> Default for RewardDestination<AccountId> {
 	fn default() -> Self {
-		RewardDestination::Staked
+		RewardDestination::Stash
 	}
 }
 

@@ -321,3 +321,18 @@ inherits = "release"
 lto = "fat"
 # https://doc.rust-lang.org/rustc/codegen-options/index.html#codegen-units
 codegen-units = 1
+
+# ORML traits patches
+[patch."https://github.com/paritytech/substrate.git"]
+frame-benchmarking = { path = "./frame/benchmarking" }
+frame-support = { path = "./frame/support" }
+sp-core = { path = "./primitives/core" }
+sp-api = { path = "./primitives/api" }
+sp-io = { path = "./primitives/io" }
+sp-storage = { path = "./primitives/storage" }
+sp-std = { path = "./primitives/std" }
+sp-runtime = { path = "./primitives/runtime" }
+sp-arithmetic = { path = "./primitives/arithmetic" }
+sp-keystore = { path = "./primitives/keystore" }
+sp-tracing = { path = "./primitives/tracing" }
+sp-application-crypto = { path = "./primitives/application-crypto" }

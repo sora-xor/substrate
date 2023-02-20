@@ -45,6 +45,7 @@
 
 use frame_support::{traits::Get, weights::{Weight, constants::RocksDbWeight}};
 use sp_std::marker::PhantomData;
+const EXTRINSIC_FIXED_WEIGHT: Weight = Weight::from_ref_time(100_000_000);
 
 /// Weight functions needed for pallet_staking.
 pub trait WeightInfo {
@@ -68,6 +69,7 @@ pub trait WeightInfo {
 	fn cancel_deferred_slash(s: u32, ) -> Weight;
 	fn payout_stakers_dead_controller(n: u32, ) -> Weight;
 	fn payout_stakers_alive_staked(n: u32, ) -> Weight;
+	fn payout_stakers() -> Weight;
 	fn rebond(l: u32, ) -> Weight;
 	fn reap_stash(s: u32, ) -> Weight;
 	fn new_era(v: u32, n: u32, ) -> Weight;
@@ -519,18 +521,15 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 			.saturating_add(T::DbWeight::get().writes((3_u64).saturating_mul(n.into())))
 			.saturating_add(Weight::from_proof_size(16026).saturating_mul(n.into()))
 	}
-	/// Storage: Staking Ledger (r:1 w:1)
-	/// Proof: Staking Ledger (max_values: None, max_size: Some(1091), added: 3566, mode: MaxEncodedLen)
-	/// Storage: Balances Locks (r:1 w:1)
-	/// Proof: Balances Locks (max_values: None, max_size: Some(1299), added: 3774, mode: MaxEncodedLen)
-	/// Storage: System Account (r:1 w:1)
-	/// Proof: System Account (max_values: None, max_size: Some(128), added: 2603, mode: MaxEncodedLen)
-	/// Storage: VoterList ListNodes (r:3 w:3)
-	/// Proof: VoterList ListNodes (max_values: None, max_size: Some(154), added: 2629, mode: MaxEncodedLen)
-	/// Storage: Staking Bonded (r:1 w:0)
-	/// Proof: Staking Bonded (max_values: None, max_size: Some(72), added: 2547, mode: MaxEncodedLen)
-	/// Storage: VoterList ListBags (r:2 w:2)
-	/// Proof: VoterList ListBags (max_values: None, max_size: Some(82), added: 2557, mode: MaxEncodedLen)
+    fn payout_stakers() -> Weight {
+        EXTRINSIC_FIXED_WEIGHT
+    }
+	// Storage: Staking Ledger (r:1 w:1)
+	// Storage: Balances Locks (r:1 w:1)
+	// Storage: System Account (r:1 w:1)
+	// Storage: VoterBagsList ListNodes (r:3 w:3)
+	// Storage: Staking Bonded (r:1 w:0)
+	// Storage: VoterBagsList ListBags (r:2 w:2)
 	/// The range of component `l` is `[1, 32]`.
 	fn rebond(l: u32, ) -> Weight {
 		// Proof Size summary in bytes:
@@ -1221,18 +1220,15 @@ impl WeightInfo for () {
 			.saturating_add(RocksDbWeight::get().writes((3_u64).saturating_mul(n.into())))
 			.saturating_add(Weight::from_proof_size(16026).saturating_mul(n.into()))
 	}
-	/// Storage: Staking Ledger (r:1 w:1)
-	/// Proof: Staking Ledger (max_values: None, max_size: Some(1091), added: 3566, mode: MaxEncodedLen)
-	/// Storage: Balances Locks (r:1 w:1)
-	/// Proof: Balances Locks (max_values: None, max_size: Some(1299), added: 3774, mode: MaxEncodedLen)
-	/// Storage: System Account (r:1 w:1)
-	/// Proof: System Account (max_values: None, max_size: Some(128), added: 2603, mode: MaxEncodedLen)
-	/// Storage: VoterList ListNodes (r:3 w:3)
-	/// Proof: VoterList ListNodes (max_values: None, max_size: Some(154), added: 2629, mode: MaxEncodedLen)
-	/// Storage: Staking Bonded (r:1 w:0)
-	/// Proof: Staking Bonded (max_values: None, max_size: Some(72), added: 2547, mode: MaxEncodedLen)
-	/// Storage: VoterList ListBags (r:2 w:2)
-	/// Proof: VoterList ListBags (max_values: None, max_size: Some(82), added: 2557, mode: MaxEncodedLen)
+    fn payout_stakers() -> Weight {
+        EXTRINSIC_FIXED_WEIGHT
+    }
+	// Storage: Staking Ledger (r:1 w:1)
+	// Storage: Balances Locks (r:1 w:1)
+	// Storage: System Account (r:1 w:1)
+	// Storage: VoterBagsList ListNodes (r:3 w:3)
+	// Storage: Staking Bonded (r:1 w:0)
+	// Storage: VoterBagsList ListBags (r:2 w:2)
 	/// The range of component `l` is `[1, 32]`.
 	fn rebond(l: u32, ) -> Weight {
 		// Proof Size summary in bytes:

@@ -16,6 +16,7 @@
 // limitations under the License.
 
 //! Staking FRAME Pallet.
+#![allow(clippy::module_inception)]
 
 use frame_election_provider_support::{
 	ElectionProvider, ElectionProviderBase, SortedListProvider, VoteWeight,
@@ -44,11 +45,13 @@ mod impls;
 pub use impls::*;
 
 use crate::{
-	slashing, weights::WeightInfo, AccountIdLookupOf, ActiveEraInfo, BalanceOf, EraPayout,
-	EraRewardPoints, Exposure, Forcing, NegativeImbalanceOf, Nominations, PositiveImbalanceOf,
-	RewardDestination, SessionInterface, StakingLedger, UnappliedSlash, UnlockChunk,
-	ValidatorPrefs,
+	slashing, weights::WeightInfo, AccountIdLookupOf, ActiveEraInfo, BalanceOf, EraRewardPoints,
+	Exposure, Forcing, NegativeImbalanceOf, Nominations, RewardDestination, SessionInterface,
+	StakingLedger, UnappliedSlash, UnlockChunk, ValidatorPrefs,
 };
+
+use crate::sora::{DurationWrapper, MultiCurrencyBalanceOf, MultiCurrencyIdOf, ValRewardCurve};
+use traits::{MultiCurrencyExtended, MultiLockableCurrency};
 
 const STAKING_ID: LockIdentifier = *b"staking ";
 // The speculative number of spans are used as an input of the weight annotation of
@@ -102,6 +105,17 @@ pub mod pallet {
 			+ From<u64>
 			+ TypeInfo
 			+ MaxEncodedLen;
+
+		/// The multicurrency to use VAL.
+		type MultiCurrency: MultiCurrencyExtended<Self::AccountId>
+			+ MultiLockableCurrency<Self::AccountId, Moment = Self::BlockNumber>;
+
+		/// The multicurrency id of the VAL token.
+		type ValTokenId: Get<MultiCurrencyIdOf<Self>>;
+
+		/// The configured reward curve for stakers.
+		type ValRewardCurve: Get<ValRewardCurve>;
+
 		/// Time used for computing era duration.
 		///
 		/// It is guaranteed to start being called from the first `on_finalize`. Thus value at
@@ -157,20 +171,11 @@ pub mod pallet {
 		#[pallet::constant]
 		type HistoryDepth: Get<u32>;
 
-		/// Tokens have been minted and are unused for validator-reward.
-		/// See [Era payout](./index.html#era-payout).
-		type RewardRemainder: OnUnbalanced<NegativeImbalanceOf<Self>>;
-
 		/// The overarching event type.
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
 		/// Handler for the unbalanced reduction when slashing a staker.
 		type Slash: OnUnbalanced<NegativeImbalanceOf<Self>>;
-
-		/// Handler for the unbalanced increment when rewarding a staker.
-		/// NOTE: in most cases, the implementation of `OnUnbalanced` should modify the total
-		/// issuance.
-		type Reward: OnUnbalanced<PositiveImbalanceOf<Self>>;
 
 		/// Number of sessions per era.
 		#[pallet::constant]
@@ -194,10 +199,6 @@ pub mod pallet {
 
 		/// Interface for interacting with a session pallet.
 		type SessionInterface: SessionInterface<Self::AccountId>;
-
-		/// The payout for validators and the system for the current era.
-		/// See [Era payout](./index.html#era-payout).
-		type EraPayout: EraPayout<BalanceOf<Self>>;
 
 		/// Something that can estimate the next session change, accurately or as a best effort
 		/// guess.
@@ -272,6 +273,11 @@ pub mod pallet {
 		/// Weight information for extrinsics in this pallet.
 		type WeightInfo: WeightInfo;
 	}
+
+	/// The time span since genesis, incremented at the end of each era.
+	#[pallet::storage]
+	#[pallet::getter(fn time_since_genesis)]
+	pub type TimeSinceGenesis<T> = StorageValue<_, DurationWrapper, ValueQuery>;
 
 	/// The ideal number of active validators.
 	#[pallet::storage]
@@ -462,7 +468,8 @@ pub mod pallet {
 	/// Eras that haven't finished yet or has been removed doesn't have reward.
 	#[pallet::storage]
 	#[pallet::getter(fn eras_validator_reward)]
-	pub type ErasValidatorReward<T: Config> = StorageMap<_, Twox64Concat, EraIndex, BalanceOf<T>>;
+	pub type ErasValidatorReward<T: Config> =
+		StorageMap<_, Twox64Concat, EraIndex, MultiCurrencyBalanceOf<T>>;
 
 	/// Rewards for the last `HISTORY_DEPTH` eras.
 	/// If reward hasn't been set or has been removed then 0 reward is returned.
@@ -471,6 +478,11 @@ pub mod pallet {
 	#[pallet::getter(fn eras_reward_points)]
 	pub type ErasRewardPoints<T: Config> =
 		StorageMap<_, Twox64Concat, EraIndex, EraRewardPoints<T::AccountId>, ValueQuery>;
+
+	/// The amount of VAL burned during this era.
+	#[pallet::storage]
+	#[pallet::getter(fn era_val_burned)]
+	pub type EraValBurned<T: Config> = StorageValue<_, MultiCurrencyBalanceOf<T>, ValueQuery>;
 
 	/// The total amount staked for the last `HISTORY_DEPTH` eras.
 	/// If total hasn't been set or has been removed then 0 stake is returned.
@@ -648,7 +660,7 @@ pub mod pallet {
 					T::RuntimeOrigin::from(Some(stash.clone()).into()),
 					T::Lookup::unlookup(controller.clone()),
 					balance,
-					RewardDestination::Staked,
+					RewardDestination::Stash,
 				));
 				frame_support::assert_ok!(match status {
 					crate::StakerStatus::Validator => <Pallet<T>>::validate(
@@ -662,8 +674,8 @@ pub mod pallet {
 					_ => Ok(()),
 				});
 				assert!(
-					ValidatorCount::<T>::get() <=
-						<T::ElectionProvider as ElectionProviderBase>::MaxWinners::get()
+					ValidatorCount::<T>::get()
+						<= <T::ElectionProvider as ElectionProviderBase>::MaxWinners::get()
 				);
 			}
 
@@ -681,10 +693,10 @@ pub mod pallet {
 	pub enum Event<T: Config> {
 		/// The era payout has been set; the first balance is the validator-payout; the second is
 		/// the remainder from the maximum amount of reward.
-		EraPaid { era_index: EraIndex, validator_payout: BalanceOf<T>, remainder: BalanceOf<T> },
+		EraPaid { era_index: EraIndex, validator_payout: MultiCurrencyBalanceOf<T> },
 		/// The nominator has been rewarded by this amount.
-		Rewarded { stash: T::AccountId, amount: BalanceOf<T> },
-		/// A staker (validator or nominator) has been slashed by the given amount.
+		Rewarded { stash: T::AccountId, amount: MultiCurrencyBalanceOf<T> },
+		/// One staker (and potentially its nominators) has been slashed by the given amount.
 		Slashed { staker: T::AccountId, amount: BalanceOf<T> },
 		/// A slash for the given validator, for the given percentage of their stake, at the given
 		/// era as been reported.
@@ -808,8 +820,8 @@ pub mod pallet {
 
 			// ensure election results are always bounded with the same value
 			assert!(
-				<T::ElectionProvider as ElectionProviderBase>::MaxWinners::get() ==
-					<T::GenesisElectionProvider as ElectionProviderBase>::MaxWinners::get()
+				<T::ElectionProvider as ElectionProviderBase>::MaxWinners::get()
+					== <T::GenesisElectionProvider as ElectionProviderBase>::MaxWinners::get()
 			);
 
 			sp_std::if_std! {
@@ -860,18 +872,18 @@ pub mod pallet {
 			let stash = ensure_signed(origin)?;
 
 			if <Bonded<T>>::contains_key(&stash) {
-				return Err(Error::<T>::AlreadyBonded.into())
+				return Err(Error::<T>::AlreadyBonded.into());
 			}
 
 			let controller = T::Lookup::lookup(controller)?;
 
 			if <Ledger<T>>::contains_key(&controller) {
-				return Err(Error::<T>::AlreadyPaired.into())
+				return Err(Error::<T>::AlreadyPaired.into());
 			}
 
 			// Reject a bond which is considered to be _dust_.
-			if value < T::Currency::minimum_balance() {
-				return Err(Error::<T>::InsufficientBond.into())
+			if value <= T::Currency::minimum_balance() {
+				return Err(Error::<T>::InsufficientBond.into());
 			}
 
 			frame_system::Pallet::<T>::inc_consumers(&stash).map_err(|_| Error::<T>::BadState)?;
@@ -1012,7 +1024,7 @@ pub mod pallet {
 				ledger.active -= value;
 
 				// Avoid there being a dust balance left in the staking system.
-				if ledger.active < T::Currency::minimum_balance() {
+				if ledger.active <= T::Currency::minimum_balance() {
 					value += ledger.active;
 					ledger.active = Zero::zero();
 				}
@@ -1274,7 +1286,7 @@ pub mod pallet {
 			let old_controller = Self::bonded(&stash).ok_or(Error::<T>::NotStash)?;
 			let controller = T::Lookup::lookup(controller)?;
 			if <Ledger<T>>::contains_key(&controller) {
-				return Err(Error::<T>::AlreadyPaired.into())
+				return Err(Error::<T>::AlreadyPaired.into());
 			}
 			if controller != old_controller {
 				<Bonded<T>>::insert(&stash, &controller);
@@ -1510,9 +1522,7 @@ pub mod pallet {
 		///   Paying even a dead controller is cheaper weight-wise. We don't do any refunds here.
 		/// # </weight>
 		#[pallet::call_index(18)]
-		#[pallet::weight(T::WeightInfo::payout_stakers_alive_staked(
-			T::MaxNominatorRewardedPerValidator::get()
-		))]
+		#[pallet::weight(T::WeightInfo::payout_stakers())]
 		pub fn payout_stakers(
 			origin: OriginFor<T>,
 			validator_stash: T::AccountId,
@@ -1586,10 +1596,10 @@ pub mod pallet {
 			let _ = ensure_signed(origin)?;
 
 			let ed = T::Currency::minimum_balance();
-			let reapable = T::Currency::total_balance(&stash) < ed ||
-				Self::ledger(Self::bonded(stash.clone()).ok_or(Error::<T>::NotStash)?)
+			let reapable = T::Currency::total_balance(&stash) <= ed
+				|| Self::ledger(Self::bonded(stash.clone()).ok_or(Error::<T>::NotStash)?)
 					.map(|l| l.total)
-					.unwrap_or_default() < ed;
+					.unwrap_or_default() <= ed;
 			ensure!(reapable, Error::<T>::FundedTarget);
 
 			Self::kill_stash(&stash, num_slashing_spans)?;
@@ -1743,7 +1753,7 @@ pub mod pallet {
 
 			if Nominators::<T>::contains_key(&stash) && Nominators::<T>::get(&stash).is_none() {
 				Self::chill_stash(&stash);
-				return Ok(())
+				return Ok(());
 			}
 
 			if caller != controller {
