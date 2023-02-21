@@ -150,6 +150,26 @@ where
 			)
 			.await;
 
+			let (_, encoded_result) = state_machine_call_with_proof::<Block, ExecDispatch>(
+				&new_ext,
+				&executor,
+				execution,
+				"TryRuntime_on_runtime_upgrade",
+				&[],
+				Default::default(), // we don't really need any extensions here.
+			)?;
+
+			let (weight, total_weight) = <(sp_weights::Weight, sp_weights::Weight) as Decode>::decode(&mut &*encoded_result)
+				.map_err(|e| format!("failed to decode weight: {:?}", e))?;
+			log::info!(
+				target: LOG_TARGET,
+				"TryRuntime_on_runtime_upgrade executed without errors. Consumed weight = ({} ps, {} byte), total weight = ({} ps, {} byte) ({:.2} %, {:.2} %).",
+				weight.ref_time(), weight.proof_size(),
+				total_weight.ref_time(), total_weight.proof_size(),
+				(weight.ref_time() as f64 / total_weight.ref_time().max(1) as f64) * 100.0,
+				(weight.proof_size() as f64 / total_weight.proof_size().max(1) as f64) * 100.0,
+			);
+
 			maybe_state_ext = Some((new_ext, spec_state_version));
 		}
 
