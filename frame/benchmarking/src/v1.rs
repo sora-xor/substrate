@@ -870,7 +870,7 @@ macro_rules! impl_bench_name_tests {
 	) => {
 		$crate::paste::paste! {
 			#[test]
-			fn [<bench_ $name>] () {
+			pub fn [<bench_ $name>] () {
 				$new_test_exec.$exec_name(|| {
 					// Skip all #[extra] benchmarks if $extra is false.
 					if !($extra) {
@@ -1239,7 +1239,7 @@ macro_rules! impl_benchmark_test {
 			where T: frame_system::Config, $( $where_clause )*
 			{
 				#[allow(unused)]
-				fn [<test_benchmark_ $name>] () -> Result<(), $crate::BenchmarkError> {
+				pub fn [<test_benchmark_ $name>] () -> Result<(), $crate::BenchmarkError> {
 					let selected_benchmark = SelectedBenchmark::$name;
 					let components = <
 						SelectedBenchmark as $crate::BenchmarkingSetup<T, _>
@@ -1691,7 +1691,7 @@ macro_rules! impl_test_function {
 			use super::$bench_module;
 
 			#[test]
-			fn test_benchmarks() {
+			pub fn test_benchmarks() {
 				$new_test_ext.$exec_name(|| {
 					use $crate::Benchmarking;
 
