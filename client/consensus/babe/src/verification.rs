@@ -103,9 +103,7 @@ pub(super) fn check_header<B: BlockT + Sized>(
 
 			check_primary_header::<B>(pre_hash, primary, sig, epoch, epoch.config.c)?;
 		},
-		PreDigest::SecondaryPlain(secondary)
-			if epoch.config.allowed_slots.is_secondary_plain_slots_allowed() =>
-		{
+		PreDigest::SecondaryPlain(secondary) => {
 			debug!(
 				target: LOG_TARGET,
 				"Verifying secondary plain block #{} at slot: {}",
@@ -115,9 +113,7 @@ pub(super) fn check_header<B: BlockT + Sized>(
 
 			check_secondary_plain_header::<B>(pre_hash, secondary, sig, epoch)?;
 		},
-		PreDigest::SecondaryVRF(secondary)
-			if epoch.config.allowed_slots.is_secondary_vrf_slots_allowed() =>
-		{
+		PreDigest::SecondaryVRF(secondary) => {
 			debug!(
 				target: LOG_TARGET,
 				"Verifying secondary VRF block #{} at slot: {}",
