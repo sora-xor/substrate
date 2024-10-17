@@ -38,6 +38,7 @@ pub fn expand_store_trait(def: &mut Def) -> proc_macro2::TokenStream {
 		&def.storages.iter().map(|storage| &storage.cfg_attrs).collect::<Vec<_>>();
 
 	quote::quote_spanned!(trait_store.span() =>
+		#[allow(unused)]
 		#trait_vis trait #trait_store {
 			#(
 				#(#storage_cfg_attrs)*
